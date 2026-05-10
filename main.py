@@ -1,20 +1,27 @@
+import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from supabase import create_client, Client
 from typing import Optional, List
 from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 
-# 1. Connect to your Supabase Database
-SUPABASE_URL = "https://loqotohlhwnnkpvahiju.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvcW90b2hsaHdubmtwdmFoaWp1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzNDg0MTIsImV4cCI6MjA5MzkyNDQxMn0.5CLi2c7KbnyoJ-6ZOM2TavMSbj9VVsPMiBV6mLR2-lk" # Use your full key here
+# 1. Connect to Supabase using Environment Variables
+# These must be set in the Render Dashboard under 'Environment'
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("SUPABASE_URL or SUPABASE_KEY environment variables are missing.")
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI(title="Raje Construction ERP API")
 
-# 2. Enable CORS (Must be before endpoints)
+# 2. Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
