@@ -1,0 +1,51 @@
+<!-- modules/works/project_detail.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Site | Raje Construction</title>
+    <link rel="stylesheet" href="../../css/main.css">
+</head>
+<body>
+    <div class="header">
+<a id="back-btn" href="#" style="color: white; text-decoration: none; float: left;">&larr; Back</a>        <h1 id="proj-name">Project Details</h1>
+        <div id="live-balance-container" style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 8px; margin-top: 10px;">
+            Current Balance: <span id="current-balance" style="font-weight: bold; font-size: 1.4rem;">₹0</span>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- PHASE 1: TENDER & AGREEMENT (Hidden if Initialized) -->
+        <div id="initialization-phase" class="card">
+            <h3 id="flow-status">Current Stage: Tender</h3>
+            <div id="form-container">
+                <!-- We will inject the specific forms (Tender, Notice, Agreement) here via JS -->
+            </div>
+        </div>
+
+        <!-- PHASE 2: DAILY OPERATIONS (Hidden until Initialized) -->
+        <div id="operations-phase" style="display: none;">
+            <div class="grid-container">
+                <div class="card" onclick="openLabourMenu()">
+                    <h3>Labour</h3>
+                    <p>Attendance & Cash</p>
+                </div>
+                <div class="card" onclick="openMaterialMenu()">
+                    <h3>Material</h3>
+                    <p>Log Purchases</p>
+                </div>
+                <div class="card" onclick="openDieselMenu()">
+                    <h3>Diesel</h3>
+                    <p>Vehicle Fuel Logs</p>
+                </div>
+            </div>
+            <button class="card btn-add" style="width: 100%; margin-top: 20px; background: #27ae60; color: white;" onclick="handleFinishWork()">
+                FINISH WORK
+            </button>
+        </div>
+    </div>
+
+    <script type="module" src="project_detail.js"></script>
+</body>
+</html>

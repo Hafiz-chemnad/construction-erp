@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Site Operations | Raje Construction</title>
+    <link rel="stylesheet" href="../../css/main.css">
+    <style>
+        /* A few specific styles for the operations page */
+        .ops-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .ops-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .ops-card:hover {
+            transform: translateY(-5px);
+        }
+    </style>
+</head>
+<body style="background-color: #f4f6f9; margin: 0; font-family: Arial, sans-serif;">
+
+    <div style="background-color: #2c3e50; color: white; padding: 20px;">
+        <a id="back-btn" href="#" style="color: white; text-decoration: none; float: left; font-size: 1.1rem;">&larr; Back to Project</a>
+        <h1 style="text-align: center; margin: 0;">Site Operations</h1>
+        
+        <div style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 5px; text-align: center; margin-top: 15px; font-size: 1.2rem;">
+            Live Balance: <span id="current-balance" style="font-weight: bold;">Loading...</span>
+        </div>
+    </div>
+
+    <div class="container" style="max-width: 800px; margin: 0 auto; padding: 20px;">
+
+        <div class="ops-grid" id="ops-menu">
+            <div class="ops-card" onclick="window.openDailyLog('labour')" style="border-bottom: 5px solid #9b59b6;">
+                <h3 style="color: #2c3e50;">Labour</h3>
+                <p style="color: #666; font-size: 0.9em;">Attendance & Cash</p>
+            </div>
+            
+            <div class="ops-card" onclick="window.openDailyLog('material')" style="border-bottom: 5px solid #3498db;">
+                <h3 style="color: #2c3e50;">Material</h3>
+                <p style="color: #666; font-size: 0.9em;">Log Purchases</p>
+            </div>
+            
+            <div class="ops-card" onclick="window.openDailyLog('diesel')" style="border-bottom: 5px solid #e67e22;">
+                <h3 style="color: #2c3e50;">Diesel</h3>
+                <p style="color: #666; font-size: 0.9em;">Vehicle Fuel</p>
+            </div>
+        </div>
+
+        <div id="daily-log-area" style="display: none; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-top: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h2 id="log-title" style="margin: 0; color: #2c3e50;">Log Entry</h2>
+                <button onclick="window.closeDailyLog()" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #e74c3c;">✖</button>
+            </div>
+            
+            <div id="log-form-container"></div>
+        </div>
+
+    </div>
+
+    <script type="module" src="operations.js"></script>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const wId = urlParams.get('work_id');
+        const pId = urlParams.get('panchayath_id');
+        const pName = urlParams.get('name');
+        
+        // Make the back button go back to the Project Detail page safely
+        document.getElementById('back-btn').href = `project_detail.html?work_id=${wId}&panchayath_id=${pId}&name=${pName}`;
+    </script>
+</body>
+</html>

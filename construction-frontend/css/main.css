@@ -1,0 +1,83 @@
+/* css/main.css */
+
+/* 1. Global Reset & Typography */
+:root {
+    --primary-color: #2c3e50; /* Dark Navy for headers */
+    --accent-color: #3498db;  /* Blue for primary actions */
+    --success-color: #2ecc71; /* Green for profit/success */
+    --danger-color: #e74c3c;  /* Red for expenses/errors */
+    --bg-color: #f4f7f6;      /* Light gray background */
+    --card-bg: #ffffff;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: var(--bg-color);
+    color: #333;
+    margin: 0;
+    padding: 0;
+}
+
+/* 2. Layouts */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 40px;
+    padding: 20px;
+    background-color: var(--primary-color);
+    color: white;
+    border-radius: 0 0 15px 15px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.grid-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 25px;
+}
+
+/* 3. Cards (Used for Panchayaths, Works, etc.) */
+.card {
+    background-color: var(--card-bg);
+    border-radius: 12px;
+    padding: 25px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    transition: all 0.3s ease;
+    cursor: pointer;
+    border: 1px solid #eaeaea;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+    border-bottom: 4px solid var(--accent-color);
+}
+
+.card-title {
+    font-size: 1.2rem;
+    font-weight: bold;
+    margin-bottom: 10px;
+    color: var(--primary-color);
+}
+
+/* 4. Utilities */
+.btn-add {
+    background-color: #e8f4fd;
+    border: 2px dashed var(--accent-color);
+    color: var(--accent-color);
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100px;
+}
+
+.btn-add:hover {
+    background-color: var(--accent-color);
+    color: white;
+}

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raje Construction ERP</title>
+    <!-- Link to your beautiful global styles -->
+    <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+
+    <div class="header">
+        <h1>Raje Construction</h1>
+        <h2>Select Panchayath</h2>
+    </div>
+
+    <div class="container">
+        <!-- This grid will be populated by our Javascript -->
+        <div class="grid-container" id="panchayath-grid">
+            <!-- The Add Button is hardcoded here so it always shows up -->
+            <div class="card btn-add" id="add-panchayath-btn">
+                + Add New Panchayath
+            </div>
+        </div>
+    </div>
+
+    <!-- The 'module' type allows this file to import your api.js file -->
+    <script type="module" src="modules/works/panchayath.js"></script>
+
+</body>
+</html>
