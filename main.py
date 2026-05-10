@@ -17,11 +17,15 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI(title="Raje Construction ERP API")
-
+origins = [
+    "http://127.0.0.1:5500",                   # Local development
+    "http://localhost:5500",
+    "https://chic-vacherin-b8782a.netlify.app" # Your live Netlify site
+]
 # 2. Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=origins, 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
