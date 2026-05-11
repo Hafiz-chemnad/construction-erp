@@ -2,36 +2,33 @@ import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from supabase import create_client, Client
-from typing import Optional, List
+from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
 
-# 1. Connect to Supabase using Environment Variables
-# These must be set in the Render Dashboard under 'Environment'
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("SUPABASE_URL or SUPABASE_KEY environment variables are missing.")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI(title="Raje Construction ERP API")
+
 origins = [
-    "http://127.0.0.1:5500",                   # Local development
+    "http://127.0.0.1:5500",
     "http://localhost:5500",
-    "https://chic-vacherin-b8782a.netlify.app" # Your live Netlify site
+    "https://chic-vacherin-b8782a.netlify.app",
 ]
-# 2. Enable CORS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins, 
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- 3. DATA MODELS ---
+# ── MODELS ────────────────────────────────────────────────────────────────────
 
 class Panchayath(BaseModel):
     name: str
@@ -60,24 +57,52 @@ class AgreementCreate(BaseModel):
     site_number: str
     site_handover_date: str
 
+class AgreementUpdate(BaseModel):
+    tender_amount: Optional[float] = None
+    emd_amount: Optional[float] = None
+    selection_notice_received: Optional[bool] = None
+    selection_notice_date: Optional[str] = None
+    supervision_amount: Optional[float] = None
+    supervision_cert_received: Optional[bool] = None
+    stamp_amount: Optional[float] = None
+    security_amount: Optional[float] = None
+    security_period: Optional[int] = None
+    security_closing_date: Optional[str] = None
+    insurance_amount: Optional[float] = None
+    site_number: Optional[str] = None
+    site_handover_date: Optional[str] = None
+
 class Labourer(BaseModel):
     work_id: int
     name: str
-    daily_wage: float
+    wage_type_1: float   # e.g. skilled wage
+    wage_type_2: float   # e.g. unskilled wage
+
+class LabourerUpdate(BaseModel):
+    name: Optional[str] = None
+    wage_type_1: Optional[float] = None
+    wage_type_2: Optional[float] = None
 
 class AttendanceLog(BaseModel):
     work_id: int
     labourer_id: int
     date: str
-    present: bool    
+    present: bool
+    wage_used: float   # actual wage applied for that day
 
 class LabourCash(BaseModel):
     work_id: int
     labourer_id: int
-    type: str # 'Advance' or 'Settlement'
+    type: str   # 'Advance' or 'Settlement'
     amount: float
     date: str
     note: Optional[str] = None
+
+class LabourCashUpdate(BaseModel):
+    amount: Optional[float] = None
+    type: Optional[str] = None
+    note: Optional[str] = None
+    date: Optional[str] = None
 
 class MaterialLog(BaseModel):
     work_id: int
@@ -86,7 +111,12 @@ class MaterialLog(BaseModel):
     date: str
     note: Optional[str] = None
 
-# --- ADD THIS MODEL AT THE TOP WITH YOUR OTHER MODELS ---
+class MaterialUpdate(BaseModel):
+    name: Optional[str] = None
+    amount: Optional[float] = None
+    date: Optional[str] = None
+    note: Optional[str] = None
+
 class DieselLog(BaseModel):
     work_id: int
     vehicle_name: str
@@ -94,164 +124,297 @@ class DieselLog(BaseModel):
     date: str
     note: Optional[str] = None
 
+class DieselUpdate(BaseModel):
+    vehicle_name: Optional[str] = None
+    amount: Optional[float] = None
+    date: Optional[str] = None
+    note: Optional[str] = None
+
 class FinishWork(BaseModel):
     quoted_amount: float
     gst_amount: float
     final_bill_amount: float
 
-# --- 4. HELPER: THE LIVE SUBTRACTION ---
-def subtract_from_balance(work_id: int, expense_amount: float):
-    # Fetch current amount from database
-    work = supabase.table("works").select("current_amount").eq("id", work_id).single().execute()
-    # Subtract expense from balance
-    new_balance = float(work.data['current_amount']) - expense_amount
-    # Update work record with new balance
-    supabase.table("works").update({"current_amount": new_balance}).eq("id", work_id).execute()
+# ── HELPERS ───────────────────────────────────────────────────────────────────
+
+def recalculate_balance(work_id: int):
+    """
+    Recompute current_amount from scratch.
+    current_amount = deal_amount - SUM(materials) - SUM(diesel) - SUM(labour_cash)
+    This is always accurate — no drift possible.
+    """
+    work = supabase.table("works").select("deal_amount").eq("id", work_id).single().execute()
+    deal = float(work.data["deal_amount"])
+
+    mat_res = supabase.table("materials").select("amount").eq("work_id", work_id).execute()
+    dsl_res = supabase.table("diesel").select("amount").eq("work_id", work_id).execute()
+    csh_res = supabase.table("labour_cash").select("amount").eq("work_id", work_id).execute()
+
+    mat_total = sum(float(r["amount"]) for r in (mat_res.data or []))
+    dsl_total = sum(float(r["amount"]) for r in (dsl_res.data or []))
+    csh_total = sum(float(r["amount"]) for r in (csh_res.data or []))
+
+    new_balance = deal - mat_total - dsl_total - csh_total
+    total_expenses = mat_total + dsl_total + csh_total
+
+    supabase.table("works").update({
+        "current_amount": new_balance,
+        "total_expenses": total_expenses,
+    }).eq("id", work_id).execute()
+
     return new_balance
 
-# --- 5. ENDPOINTS ---
+# ── ROOT ──────────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def read_root():
     return {"message": "Raje Construction API Online"}
 
-# PANCHAYATHS
+# ── PANCHAYATHS ───────────────────────────────────────────────────────────────
+
 @app.get("/panchayaths")
 def get_all_panchayaths():
-    response = supabase.table("panchayaths").select("*").execute()
-    return response.data
+    return supabase.table("panchayaths").select("*").order("created_at").execute().data
 
 @app.post("/panchayaths")
-def add_panchayath(panchayath: Panchayath):
-    response = supabase.table("panchayaths").insert({"name": panchayath.name}).execute()
-    return response.data
+def add_panchayath(p: Panchayath):
+    return supabase.table("panchayaths").insert({"name": p.name}).execute().data
 
-# WORKS LIST (By Panchayath)
-@app.get("/works/{panchayath_id}")
-def get_works_by_panchayath(panchayath_id: int):
-    response = supabase.table("works").select("*").eq("panchayath_id", panchayath_id).execute()
-    return response.data
+# ── WORKS ─────────────────────────────────────────────────────────────────────
+# NOTE: /works/detail/{id} MUST be declared before /works/by-panchayath/{id}
+# to avoid FastAPI matching "detail" as a panchayath_id.
 
-# WORK DETAIL (Single Project)
 @app.get("/works/detail/{work_id}")
 def get_work_detail(work_id: int):
-    response = supabase.table("works").select("*").eq("id", work_id).single().execute()
-    return response.data
+    res = supabase.table("works").select("*").eq("id", work_id).single().execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Work not found")
+    return res.data
+
+@app.get("/works/by-panchayath/{panchayath_id}")
+def get_works_by_panchayath(panchayath_id: int):
+    return supabase.table("works").select("*").eq("panchayath_id", panchayath_id).order("created_at").execute().data
 
 @app.post("/works")
 def add_new_work(work: WorkCreate):
-    # Set current_amount equal to deal_amount initially
-    new_work_data = {
+    if work.deal_amount <= 0:
+        raise HTTPException(status_code=400, detail="Deal amount must be positive")
+    data = {
         "panchayath_id": work.panchayath_id,
         "name": work.name,
         "deal_amount": work.deal_amount,
-        "current_amount": work.deal_amount, 
-        "status": "PENDING"
+        "current_amount": work.deal_amount,
+        "total_expenses": 0,
+        "status": "PENDING",
     }
-    response = supabase.table("works").insert(new_work_data).execute()
-    return response.data
+    return supabase.table("works").insert(data).execute().data
 
 @app.patch("/works/{work_id}/status")
 def update_status(work_id: int, data: StatusUpdate):
-    response = supabase.table("works").update({"status": data.status}).eq("id", work_id).execute()
-    return response.data
+    return supabase.table("works").update({"status": data.status}).eq("id", work_id).execute().data
 
-# AGREEMENTS & INITIALIZATION
+# ── AGREEMENTS ────────────────────────────────────────────────────────────────
+
 @app.post("/agreements")
 def create_agreement(agreement: AgreementCreate):
-    response = supabase.table("agreements").insert(agreement.dict()).execute()
-    # Auto-initialize work
+    res = supabase.table("agreements").insert(agreement.dict()).execute()
     supabase.table("works").update({"status": "INITIALIZED"}).eq("id", agreement.work_id).execute()
-    return response.data
+    return res.data
 
-# MATERIALS (With Live Subtraction)
-# --- ADD THIS NEW ENDPOINT ---
+@app.get("/agreements/by-work/{work_id}")
+def get_agreement_by_work(work_id: int):
+    res = supabase.table("agreements").select("*").eq("work_id", work_id).execute()
+    if not res.data:
+        return None
+    return res.data[0]
+
+@app.patch("/agreements/{agreement_id}")
+def update_agreement(agreement_id: int, data: AgreementUpdate):
+    update_data = {k: v for k, v in data.dict().items() if v is not None}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    return supabase.table("agreements").update(update_data).eq("id", agreement_id).execute().data
+
+# ── MATERIALS ─────────────────────────────────────────────────────────────────
+
 @app.get("/materials/{work_id}")
 def get_materials_by_work(work_id: int):
-    response = supabase.table("materials").select("*").eq("work_id", work_id).execute()
-    return response.data
+    return supabase.table("materials").select("*").eq("work_id", work_id).order("date", desc=True).execute().data
 
 @app.post("/materials")
 def add_material(item: MaterialLog):
-    response = supabase.table("materials").insert(item.dict()).execute()
-    new_bal = subtract_from_balance(item.work_id, item.amount) # Trigger subtraction
+    if item.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    supabase.table("materials").insert(item.dict()).execute()
+    new_bal = recalculate_balance(item.work_id)
     return {"message": "Material logged", "current_balance": new_bal}
+
+@app.patch("/materials/{material_id}")
+def update_material(material_id: int, data: MaterialUpdate):
+    update_data = {k: v for k, v in data.dict().items() if v is not None}
+    res = supabase.table("materials").update(update_data).eq("id", material_id).execute()
+    # Get work_id for recalculation
+    mat = supabase.table("materials").select("work_id").eq("id", material_id).single().execute()
+    if mat.data:
+        recalculate_balance(mat.data["work_id"])
+    return res.data
+
+@app.delete("/materials/{material_id}")
+def delete_material(material_id: int):
+    mat = supabase.table("materials").select("work_id").eq("id", material_id).single().execute()
+    work_id = mat.data["work_id"] if mat.data else None
+    supabase.table("materials").delete().eq("id", material_id).execute()
+    if work_id:
+        recalculate_balance(work_id)
+    return {"deleted": True}
+
+# ── DIESEL ────────────────────────────────────────────────────────────────────
 
 @app.get("/diesel/{work_id}")
 def get_diesel_by_work(work_id: int):
-    response = supabase.table("diesel").select("*").eq("work_id", work_id).execute()
-    return response.data
+    return supabase.table("diesel").select("*").eq("work_id", work_id).order("date", desc=True).execute().data
 
 @app.post("/diesel")
 def add_diesel(item: DieselLog):
-    response = supabase.table("diesel").insert(item.dict()).execute()
-    new_bal = subtract_from_balance(item.work_id, item.amount) # Trigger subtraction
+    if item.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    supabase.table("diesel").insert(item.dict()).execute()
+    new_bal = recalculate_balance(item.work_id)
     return {"message": "Diesel logged", "current_balance": new_bal}
 
+@app.patch("/diesel/{diesel_id}")
+def update_diesel(diesel_id: int, data: DieselUpdate):
+    update_data = {k: v for k, v in data.dict().items() if v is not None}
+    res = supabase.table("diesel").update(update_data).eq("id", diesel_id).execute()
+    dsl = supabase.table("diesel").select("work_id").eq("id", diesel_id).single().execute()
+    if dsl.data:
+        recalculate_balance(dsl.data["work_id"])
+    return res.data
 
-   
-# LABOUR CASH (With Live Subtraction)
+@app.delete("/diesel/{diesel_id}")
+def delete_diesel(diesel_id: int):
+    dsl = supabase.table("diesel").select("work_id").eq("id", diesel_id).single().execute()
+    work_id = dsl.data["work_id"] if dsl.data else None
+    supabase.table("diesel").delete().eq("id", diesel_id).execute()
+    if work_id:
+        recalculate_balance(work_id)
+    return {"deleted": True}
 
-# --- ENDPOINTS ---
+# ── LABOURERS ─────────────────────────────────────────────────────────────────
 
-# 1. Get all labourers for a project
 @app.get("/labourers/{work_id}")
 def get_labourers(work_id: int):
-    return supabase.table("labourers").select("*").eq("work_id", work_id).execute().data
+    return supabase.table("labourers").select("*").eq("work_id", work_id).order("name").execute().data
 
-# 2. Add a new labourer to the roster
 @app.post("/labourers")
 def add_labourer(item: Labourer):
-    return supabase.table("labourers").insert(item.dict()).execute()
+    return supabase.table("labourers").insert(item.dict()).execute().data
 
-# 3. Log cash payment (and subtract from live balance)
-@app.post("/labour-cash")
-def add_labour_cash(item: LabourCash):
-    response = supabase.table("labour_cash").insert(item.dict()).execute()
-    # Subtract from the main work balance
-    subtract_from_balance(item.work_id, item.amount)
-    return response.data
+@app.patch("/labourers/{labourer_id}")
+def update_labourer(labourer_id: int, data: LabourerUpdate):
+    update_data = {k: v for k, v in data.dict().items() if v is not None}
+    return supabase.table("labourers").update(update_data).eq("id", labourer_id).execute().data
 
-@app.get("/labour-cash/{work_id}")
-def get_labour_cash_history(work_id: int):
-    try:
-        response = supabase.table("labour_cash").select("*").eq("work_id", work_id).execute()
-        return response.data if response.data else [] # Return empty list if no data
-    except Exception as e:
-        print(f"Error fetching cash: {e}")
-        return []
+@app.delete("/labourers/{labourer_id}")
+def delete_labourer(labourer_id: int):
+    supabase.table("attendance").delete().eq("labourer_id", labourer_id).execute()
+    supabase.table("labour_cash").delete().eq("labourer_id", labourer_id).execute()
+    supabase.table("labourers").delete().eq("id", labourer_id).execute()
+    return {"deleted": True}
+
+# ── ATTENDANCE ────────────────────────────────────────────────────────────────
 
 @app.get("/attendance/{work_id}")
 def get_attendance(work_id: int):
     try:
-        response = supabase.table("attendance").select("*").eq("work_id", work_id).execute()
-        return response.data if response.data else []
+        return supabase.table("attendance").select("*").eq("work_id", work_id).execute().data or []
     except Exception as e:
         print(f"Error fetching attendance: {e}")
         return []
 
-# 2. Mark attendance
 @app.post("/attendance")
 def mark_attendance(item: AttendanceLog):
-    return supabase.table("attendance").insert(item.dict()).execute()
+    # Prevent duplicate attendance for same labourer+date
+    existing = supabase.table("attendance") \
+        .select("id") \
+        .eq("labourer_id", item.labourer_id) \
+        .eq("date", item.date) \
+        .execute()
+    if existing.data:
+        # Update existing record
+        return supabase.table("attendance") \
+            .update({"present": item.present, "wage_used": item.wage_used}) \
+            .eq("id", existing.data[0]["id"]).execute().data
+    return supabase.table("attendance").insert(item.dict()).execute().data
 
-# FINISH & PROFIT MATH
+@app.delete("/attendance/{attendance_id}")
+def delete_attendance(attendance_id: int):
+    supabase.table("attendance").delete().eq("id", attendance_id).execute()
+    return {"deleted": True}
+
+# ── LABOUR CASH ───────────────────────────────────────────────────────────────
+
+@app.get("/labour-cash/{work_id}")
+def get_labour_cash_history(work_id: int):
+    try:
+        return supabase.table("labour_cash").select("*").eq("work_id", work_id).order("date", desc=True).execute().data or []
+    except Exception as e:
+        print(f"Error fetching cash: {e}")
+        return []
+
+@app.post("/labour-cash")
+def add_labour_cash(item: LabourCash):
+    if item.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    supabase.table("labour_cash").insert(item.dict()).execute()
+    new_bal = recalculate_balance(item.work_id)
+    return {"message": "Cash logged", "current_balance": new_bal}
+
+@app.patch("/labour-cash/{cash_id}")
+def update_labour_cash(cash_id: int, data: LabourCashUpdate):
+    update_data = {k: v for k, v in data.dict().items() if v is not None}
+    res = supabase.table("labour_cash").update(update_data).eq("id", cash_id).execute()
+    csh = supabase.table("labour_cash").select("work_id").eq("id", cash_id).single().execute()
+    if csh.data:
+        recalculate_balance(csh.data["work_id"])
+    return res.data
+
+@app.delete("/labour-cash/{cash_id}")
+def delete_labour_cash(cash_id: int):
+    csh = supabase.table("labour_cash").select("work_id").eq("id", cash_id).single().execute()
+    work_id = csh.data["work_id"] if csh.data else None
+    supabase.table("labour_cash").delete().eq("id", cash_id).execute()
+    if work_id:
+        recalculate_balance(work_id)
+    return {"deleted": True}
+
+# ── FINISH WORK ───────────────────────────────────────────────────────────────
+
 @app.post("/works/{work_id}/finish")
 def finish_work(work_id: int, data: FinishWork):
-    work = supabase.table("works").select("current_amount", "deal_amount").eq("id", work_id).single().execute()
-    current_card_amount = float(work.data['current_amount'])
-    deal_amount = float(work.data['deal_amount'])
+    work = supabase.table("works").select("deal_amount", "total_expenses").eq("id", work_id).single().execute()
+    if not work.data:
+        raise HTTPException(status_code=404, detail="Work not found")
 
-    # Profit logic: Adjustment + remaining balance
-    adjustment = data.final_bill_amount - deal_amount
-    final_profit = current_card_amount + adjustment 
+    deal_amount    = float(work.data["deal_amount"])
+    total_expenses = float(work.data.get("total_expenses") or 0)
 
-    update_data = {
-        "quoted_amount": data.quoted_amount,
-        "gst_amount": data.gst_amount,
+    if data.final_bill_amount > deal_amount:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Final bill ({data.final_bill_amount}) cannot exceed deal amount ({deal_amount})"
+        )
+
+    # CORRECT PROFIT MATH:
+    # profit = what you actually received - what you actually spent
+    final_profit = data.final_bill_amount - total_expenses
+
+    supabase.table("works").update({
+        "quoted_amount":     data.quoted_amount,
+        "gst_amount":        data.gst_amount,
         "final_bill_amount": data.final_bill_amount,
-        "status": "FINISHED"
-    }
-    supabase.table("works").update(update_data).eq("id", work_id).execute()
+        "profit":            final_profit,
+        "status":            "FINISHED",
+    }).eq("id", work_id).execute()
 
     return {"status": "FINISHED", "final_profit": final_profit}
