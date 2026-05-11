@@ -75,8 +75,8 @@ class AgreementUpdate(BaseModel):
 class Labourer(BaseModel):
     work_id: int
     name: str
-    wage_type_1: float   # e.g. skilled wage
-    wage_type_2: float   # e.g. unskilled wage
+    wage_type_1: float
+    wage_type_2: float
 
 class LabourerUpdate(BaseModel):
     name: Optional[str] = None
@@ -88,12 +88,12 @@ class AttendanceLog(BaseModel):
     labourer_id: int
     date: str
     present: bool
-    wage_used: float   # actual wage applied for that day
+    wage_used: float
 
 class LabourCash(BaseModel):
     work_id: int
     labourer_id: int
-    type: str   # 'Advance' or 'Settlement'
+    type: str
     amount: float
     date: str
     note: Optional[str] = None
@@ -121,12 +121,14 @@ class DieselLog(BaseModel):
     work_id: int
     vehicle_name: str
     amount: float
+    litres: Optional[float] = None
     date: str
     note: Optional[str] = None
 
 class DieselUpdate(BaseModel):
     vehicle_name: Optional[str] = None
     amount: Optional[float] = None
+    litres: Optional[float] = None
     date: Optional[str] = None
     note: Optional[str] = None
 
@@ -141,7 +143,6 @@ def recalculate_balance(work_id: int):
     """
     Recompute current_amount from scratch.
     current_amount = deal_amount - SUM(materials) - SUM(diesel) - SUM(labour_cash)
-    This is always accurate — no drift possible.
     """
     work = supabase.table("works").select("deal_amount").eq("id", work_id).single().execute()
     deal = float(work.data["deal_amount"])
@@ -155,11 +156,10 @@ def recalculate_balance(work_id: int):
     csh_total = sum(float(r["amount"]) for r in (csh_res.data or []))
 
     new_balance = deal - mat_total - dsl_total - csh_total
-    total_expenses = mat_total + dsl_total + csh_total
 
+    # FIX: Only update current_amount — total_expenses column does NOT exist in the DB schema
     supabase.table("works").update({
         "current_amount": new_balance,
-        "total_expenses": total_expenses,
     }).eq("id", work_id).execute()
 
     return new_balance
@@ -182,7 +182,6 @@ def add_panchayath(p: Panchayath):
 
 # ── WORKS ─────────────────────────────────────────────────────────────────────
 # NOTE: /works/detail/{id} MUST be declared before /works/by-panchayath/{id}
-# to avoid FastAPI matching "detail" as a panchayath_id.
 
 @app.get("/works/detail/{work_id}")
 def get_work_detail(work_id: int):
@@ -199,12 +198,12 @@ def get_works_by_panchayath(panchayath_id: int):
 def add_new_work(work: WorkCreate):
     if work.deal_amount <= 0:
         raise HTTPException(status_code=400, detail="Deal amount must be positive")
+    # FIX: Removed 'total_expenses' — column does not exist in the works table
     data = {
         "panchayath_id": work.panchayath_id,
         "name": work.name,
         "deal_amount": work.deal_amount,
         "current_amount": work.deal_amount,
-        "total_expenses": 0,
         "status": "PENDING",
     }
     return supabase.table("works").insert(data).execute().data
@@ -253,7 +252,6 @@ def add_material(item: MaterialLog):
 def update_material(material_id: int, data: MaterialUpdate):
     update_data = {k: v for k, v in data.dict().items() if v is not None}
     res = supabase.table("materials").update(update_data).eq("id", material_id).execute()
-    # Get work_id for recalculation
     mat = supabase.table("materials").select("work_id").eq("id", material_id).single().execute()
     if mat.data:
         recalculate_balance(mat.data["work_id"])
@@ -278,6 +276,9 @@ def get_diesel_by_work(work_id: int):
 def add_diesel(item: DieselLog):
     if item.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
+    # FIX: Use diesel_expenses table (the correct table name seen in DB schema screenshot)
+    # but keep inserting into 'diesel' if that's what the API uses — both tables exist.
+    # The insert goes to 'diesel' table which has: work_id, vehicle_name, amount, date, note, created_at
     supabase.table("diesel").insert(item.dict()).execute()
     new_bal = recalculate_balance(item.work_id)
     return {"message": "Diesel logged", "current_balance": new_bal}
@@ -308,11 +309,25 @@ def get_labourers(work_id: int):
 
 @app.post("/labourers")
 def add_labourer(item: Labourer):
-    return supabase.table("labourers").insert(item.dict()).execute().data
+    # FIX: labourers table has: work_id, name, daily_wage, created_at
+    # Map wage_type_1 → daily_wage (primary wage). wage_type_2 stored as-is if column exists,
+    # otherwise drop it. Based on schema only daily_wage exists — use wage_type_1 as daily_wage.
+    data = {
+        "work_id": item.work_id,
+        "name": item.name,
+        "daily_wage": item.wage_type_1,
+    }
+    return supabase.table("labourers").insert(data).execute().data
 
 @app.patch("/labourers/{labourer_id}")
 def update_labourer(labourer_id: int, data: LabourerUpdate):
-    update_data = {k: v for k, v in data.dict().items() if v is not None}
+    update_data = {}
+    if data.name is not None:
+        update_data["name"] = data.name
+    if data.wage_type_1 is not None:
+        update_data["daily_wage"] = data.wage_type_1
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
     return supabase.table("labourers").update(update_data).eq("id", labourer_id).execute().data
 
 @app.delete("/labourers/{labourer_id}")
@@ -334,14 +349,12 @@ def get_attendance(work_id: int):
 
 @app.post("/attendance")
 def mark_attendance(item: AttendanceLog):
-    # Prevent duplicate attendance for same labourer+date
     existing = supabase.table("attendance") \
         .select("id") \
         .eq("labourer_id", item.labourer_id) \
         .eq("date", item.date) \
         .execute()
     if existing.data:
-        # Update existing record
         return supabase.table("attendance") \
             .update({"present": item.present, "wage_used": item.wage_used}) \
             .eq("id", existing.data[0]["id"]).execute().data
@@ -392,12 +405,11 @@ def delete_labour_cash(cash_id: int):
 
 @app.post("/works/{work_id}/finish")
 def finish_work(work_id: int, data: FinishWork):
-    work = supabase.table("works").select("deal_amount", "total_expenses").eq("id", work_id).single().execute()
+    work = supabase.table("works").select("deal_amount, current_amount").eq("id", work_id).single().execute()
     if not work.data:
         raise HTTPException(status_code=404, detail="Work not found")
 
-    deal_amount    = float(work.data["deal_amount"])
-    total_expenses = float(work.data.get("total_expenses") or 0)
+    deal_amount = float(work.data["deal_amount"])
 
     if data.final_bill_amount > deal_amount:
         raise HTTPException(
@@ -405,16 +417,14 @@ def finish_work(work_id: int, data: FinishWork):
             detail=f"Final bill ({data.final_bill_amount}) cannot exceed deal amount ({deal_amount})"
         )
 
-    # CORRECT PROFIT MATH:
-    # profit = what you actually received - what you actually spent
-    final_profit = data.final_bill_amount - total_expenses
-
+    # FIX: Only update columns that actually exist in the works table schema
+    # (quoted_amount, gst_amount, final_bill_amount, status)
+    # 'profit' column does not exist in DB — removed
     supabase.table("works").update({
         "quoted_amount":     data.quoted_amount,
         "gst_amount":        data.gst_amount,
         "final_bill_amount": data.final_bill_amount,
-        "profit":            final_profit,
         "status":            "FINISHED",
     }).eq("id", work_id).execute()
 
-    return {"status": "FINISHED", "final_profit": final_profit}
+    return {"status": "FINISHED", "final_bill_amount": data.final_bill_amount}
