@@ -121,6 +121,7 @@ class DieselLog(BaseModel):
     work_id: int
     vehicle_name: str
     amount: float
+    # FIX: litres is optional — strip it before insert if the DB column doesn't exist
     litres: Optional[float] = None
     date: str
     note: Optional[str] = None
@@ -157,7 +158,6 @@ def recalculate_balance(work_id: int):
 
     new_balance = deal - mat_total - dsl_total - csh_total
 
-    # FIX: Only update current_amount — total_expenses column does NOT exist in the DB schema
     supabase.table("works").update({
         "current_amount": new_balance,
     }).eq("id", work_id).execute()
@@ -198,7 +198,6 @@ def get_works_by_panchayath(panchayath_id: int):
 def add_new_work(work: WorkCreate):
     if work.deal_amount <= 0:
         raise HTTPException(status_code=400, detail="Deal amount must be positive")
-    # FIX: Removed 'total_expenses' — column does not exist in the works table
     data = {
         "panchayath_id": work.panchayath_id,
         "name": work.name,
@@ -244,7 +243,9 @@ def get_materials_by_work(work_id: int):
 def add_material(item: MaterialLog):
     if item.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
-    supabase.table("materials").insert(item.dict()).execute()
+    # Strip None values — only send columns that actually exist in the table
+    data = {k: v for k, v in item.dict().items() if v is not None}
+    supabase.table("materials").insert(data).execute()
     new_bal = recalculate_balance(item.work_id)
     return {"message": "Material logged", "current_balance": new_bal}
 
@@ -268,6 +269,12 @@ def delete_material(material_id: int):
 
 # ── DIESEL ────────────────────────────────────────────────────────────────────
 
+# Columns that actually exist in the 'diesel' table (from DB schema screenshot):
+# id, work_id, vehicle_name, amount, date, note, created_at
+# The 'litres' column does NOT exist — it only exists in 'diesel_expenses'.
+# FIX: Always exclude 'litres' from inserts/updates to the 'diesel' table.
+DIESEL_TABLE_COLUMNS = {"work_id", "vehicle_name", "amount", "date", "note"}
+
 @app.get("/diesel/{work_id}")
 def get_diesel_by_work(work_id: int):
     return supabase.table("diesel").select("*").eq("work_id", work_id).order("date", desc=True).execute().data
@@ -276,16 +283,22 @@ def get_diesel_by_work(work_id: int):
 def add_diesel(item: DieselLog):
     if item.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
-    # FIX: Use diesel_expenses table (the correct table name seen in DB schema screenshot)
-    # but keep inserting into 'diesel' if that's what the API uses — both tables exist.
-    # The insert goes to 'diesel' table which has: work_id, vehicle_name, amount, date, note, created_at
-    supabase.table("diesel").insert(item.dict()).execute()
+    # FIX: Only insert columns that exist in the diesel table.
+    # item.dict() would include 'litres' which crashes with PGRST204.
+    data = {k: v for k, v in item.dict().items() if k in DIESEL_TABLE_COLUMNS and v is not None}
+    supabase.table("diesel").insert(data).execute()
     new_bal = recalculate_balance(item.work_id)
     return {"message": "Diesel logged", "current_balance": new_bal}
 
 @app.patch("/diesel/{diesel_id}")
 def update_diesel(diesel_id: int, data: DieselUpdate):
-    update_data = {k: v for k, v in data.dict().items() if v is not None}
+    # FIX: Same — strip litres and any None values before sending to DB
+    update_data = {
+        k: v for k, v in data.dict().items()
+        if v is not None and k in DIESEL_TABLE_COLUMNS
+    }
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
     res = supabase.table("diesel").update(update_data).eq("id", diesel_id).execute()
     dsl = supabase.table("diesel").select("work_id").eq("id", diesel_id).single().execute()
     if dsl.data:
@@ -309,9 +322,8 @@ def get_labourers(work_id: int):
 
 @app.post("/labourers")
 def add_labourer(item: Labourer):
-    # FIX: labourers table has: work_id, name, daily_wage, created_at
-    # Map wage_type_1 → daily_wage (primary wage). wage_type_2 stored as-is if column exists,
-    # otherwise drop it. Based on schema only daily_wage exists — use wage_type_1 as daily_wage.
+    # labourers table has: work_id, name, daily_wage
+    # Map wage_type_1 → daily_wage
     data = {
         "work_id": item.work_id,
         "name": item.name,
@@ -339,6 +351,12 @@ def delete_labourer(labourer_id: int):
 
 # ── ATTENDANCE ────────────────────────────────────────────────────────────────
 
+# Columns that exist in the 'attendance' table (from DB schema screenshot):
+# id, labourer_id, work_id, date, present, created_at
+# 'wage_used' does NOT exist in the table — it is stored in labourers.daily_wage
+# FIX: Strip wage_used from attendance inserts. It is only used client-side for display.
+ATTENDANCE_TABLE_COLUMNS = {"work_id", "labourer_id", "date", "present"}
+
 @app.get("/attendance/{work_id}")
 def get_attendance(work_id: int):
     try:
@@ -349,16 +367,22 @@ def get_attendance(work_id: int):
 
 @app.post("/attendance")
 def mark_attendance(item: AttendanceLog):
+    # FIX: Only send columns that exist in the attendance table.
+    # 'wage_used' caused the 500 → which browser showed as a CORS error.
+    insert_data = {k: v for k, v in item.dict().items() if k in ATTENDANCE_TABLE_COLUMNS}
+
     existing = supabase.table("attendance") \
         .select("id") \
         .eq("labourer_id", item.labourer_id) \
         .eq("date", item.date) \
         .execute()
+
     if existing.data:
         return supabase.table("attendance") \
-            .update({"present": item.present, "wage_used": item.wage_used}) \
+            .update({"present": item.present}) \
             .eq("id", existing.data[0]["id"]).execute().data
-    return supabase.table("attendance").insert(item.dict()).execute().data
+
+    return supabase.table("attendance").insert(insert_data).execute().data
 
 @app.delete("/attendance/{attendance_id}")
 def delete_attendance(attendance_id: int):
@@ -379,7 +403,9 @@ def get_labour_cash_history(work_id: int):
 def add_labour_cash(item: LabourCash):
     if item.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
-    supabase.table("labour_cash").insert(item.dict()).execute()
+    # Strip None values before insert
+    data = {k: v for k, v in item.dict().items() if v is not None}
+    supabase.table("labour_cash").insert(data).execute()
     new_bal = recalculate_balance(item.work_id)
     return {"message": "Cash logged", "current_balance": new_bal}
 
@@ -417,9 +443,6 @@ def finish_work(work_id: int, data: FinishWork):
             detail=f"Final bill ({data.final_bill_amount}) cannot exceed deal amount ({deal_amount})"
         )
 
-    # FIX: Only update columns that actually exist in the works table schema
-    # (quoted_amount, gst_amount, final_bill_amount, status)
-    # 'profit' column does not exist in DB — removed
     supabase.table("works").update({
         "quoted_amount":     data.quoted_amount,
         "gst_amount":        data.gst_amount,
