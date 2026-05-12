@@ -138,6 +138,75 @@ class FinishWork(BaseModel):
     gst_amount: float
     final_bill_amount: float
 
+
+# ── VEHICLE MODELS ────────────────────────────────────────────────
+ 
+class VehicleCreate(BaseModel):
+    company:     str             # 'thoofan' | 'rays' | 'other'
+    type:        str             # 'vehicle' | 'machine'
+    name:        str
+    reg_number:  Optional[str]  = None
+    driver_name: Optional[str]  = None
+ 
+class VehicleUpdate(BaseModel):
+    name:        Optional[str]  = None
+    reg_number:  Optional[str]  = None
+    driver_name: Optional[str]  = None
+    is_active:   Optional[bool] = None
+ 
+# Thoofan / Other log (hours-based rent)
+class VehicleLogCreate(BaseModel):
+    vehicle_id:     int
+    date:           str
+    hours:          Optional[float] = None
+    rate:           Optional[float] = None
+    site:           Optional[str]   = None
+    parts_name:     Optional[str]   = None
+    parts_amount:   float           = 0
+    service_amount: float           = 0
+    note:           Optional[str]   = None
+ 
+# Rays vehicle trip log
+class RaysVehicleLogCreate(BaseModel):
+    vehicle_id:     int
+    date:           str
+    driver_name:    Optional[str]   = None
+    trip_salary:    float           = 0
+    load_quantity:  Optional[str]   = None
+    site:           Optional[str]   = None
+    diesel_source:  Optional[str]   = None
+    diesel_amount:  float           = 0
+    rto_amount:     float           = 0
+    parts_name:     Optional[str]   = None
+    parts_amount:   float           = 0
+    service_amount: float           = 0
+    note:           Optional[str]   = None
+ 
+# Rays machine log (same as thoofan log)
+class RaysMachineLogCreate(BaseModel):
+    vehicle_id:     int
+    date:           str
+    hours:          Optional[float] = None
+    rate:           Optional[float] = None
+    site:           Optional[str]   = None
+    parts_name:     Optional[str]   = None
+    parts_amount:   float           = 0
+    service_amount: float           = 0
+    note:           Optional[str]   = None
+ 
+class DriverSalaryCreate(BaseModel):
+    vehicle_id:  int
+    driver_name: str
+    week_start:  str
+    week_end:    str
+    amount:      float
+    paid:        bool           = False
+    note:        Optional[str]  = None
+ 
+class DriverSalaryUpdate(BaseModel):
+    paid:   Optional[bool]  = None
+    amount: Optional[float] = None
+    note:   Optional[str]   = None
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 
 def recalculate_balance(work_id: int):
@@ -451,3 +520,168 @@ def finish_work(work_id: int, data: FinishWork):
     }).eq("id", work_id).execute()
 
     return {"status": "FINISHED", "final_bill_amount": data.final_bill_amount}
+
+# ── VEHICLE REGISTRY ROUTES ───────────────────────────────────────
+ 
+@app.get("/vehicles")
+def get_vehicles(company: str):
+    return supabase.table("vehicles") \
+        .select("*") \
+        .eq("company", company) \
+        .eq("is_active", True) \
+        .order("type") \
+        .order("name") \
+        .execute().data
+ 
+@app.post("/vehicles")
+def add_vehicle(item: VehicleCreate):
+    data = {k: v for k, v in item.dict().items() if v is not None}
+    data["is_active"] = True
+    return supabase.table("vehicles").insert(data).execute().data
+ 
+@app.patch("/vehicles/{vehicle_id}")
+def update_vehicle(vehicle_id: int, data: VehicleUpdate):
+    update = {k: v for k, v in data.dict().items() if v is not None}
+    return supabase.table("vehicles").update(update).eq("id", vehicle_id).execute().data
+ 
+@app.delete("/vehicles/{vehicle_id}")
+def delete_vehicle(vehicle_id: int):
+    # Soft delete — just mark inactive
+    supabase.table("vehicles").update({"is_active": False}).eq("id", vehicle_id).execute()
+    return {"deleted": True}
+ 
+ 
+# ── THOOFAN LOGS ──────────────────────────────────────────────────
+ 
+THOOFAN_LOG_COLUMNS = {
+    "vehicle_id","date","hours","rate","site",
+    "parts_name","parts_amount","service_amount","note"
+}
+ 
+@app.get("/vehicle-logs/thoofan/{vehicle_id}")
+def get_thoofan_logs(vehicle_id: int):
+    return supabase.table("thoofan_logs") \
+        .select("*") \
+        .eq("vehicle_id", vehicle_id) \
+        .order("date", desc=True) \
+        .execute().data
+ 
+@app.post("/vehicle-logs/thoofan")
+def add_thoofan_log(item: VehicleLogCreate):
+    data = {k: v for k, v in item.dict().items()
+            if k in THOOFAN_LOG_COLUMNS and v is not None}
+    return supabase.table("thoofan_logs").insert(data).execute().data
+ 
+@app.delete("/vehicle-logs/thoofan/{log_id}")
+def delete_thoofan_log(log_id: int):
+    supabase.table("thoofan_logs").delete().eq("id", log_id).execute()
+    return {"deleted": True}
+ 
+ 
+# ── OTHER COMPANY LOGS ────────────────────────────────────────────
+ 
+OTHER_LOG_COLUMNS = {
+    "vehicle_id","date","hours","rate","site",
+    "parts_name","parts_amount","service_amount","note"
+}
+ 
+@app.get("/vehicle-logs/other/{vehicle_id}")
+def get_other_logs(vehicle_id: int):
+    return supabase.table("other_vehicle_logs") \
+        .select("*") \
+        .eq("vehicle_id", vehicle_id) \
+        .order("date", desc=True) \
+        .execute().data
+ 
+@app.post("/vehicle-logs/other")
+def add_other_log(item: VehicleLogCreate):
+    data = {k: v for k, v in item.dict().items()
+            if k in OTHER_LOG_COLUMNS and v is not None}
+    return supabase.table("other_vehicle_logs").insert(data).execute().data
+ 
+@app.delete("/vehicle-logs/other/{log_id}")
+def delete_other_log(log_id: int):
+    supabase.table("other_vehicle_logs").delete().eq("id", log_id).execute()
+    return {"deleted": True}
+ 
+ 
+# ── RAYS VEHICLE TRIP LOGS ────────────────────────────────────────
+ 
+RAYS_VEHICLE_COLUMNS = {
+    "vehicle_id","date","driver_name","trip_salary","load_quantity","site",
+    "diesel_source","diesel_amount","rto_amount",
+    "parts_name","parts_amount","service_amount","note"
+}
+ 
+@app.get("/rays/vehicle-logs/{vehicle_id}")
+def get_rays_vehicle_logs(vehicle_id: int):
+    return supabase.table("rays_vehicle_logs") \
+        .select("*") \
+        .eq("vehicle_id", vehicle_id) \
+        .order("date", desc=True) \
+        .execute().data
+ 
+@app.post("/rays/vehicle-logs")
+def add_rays_vehicle_log(item: RaysVehicleLogCreate):
+    data = {k: v for k, v in item.dict().items()
+            if k in RAYS_VEHICLE_COLUMNS and v is not None}
+    return supabase.table("rays_vehicle_logs").insert(data).execute().data
+ 
+@app.delete("/rays/vehicle-logs/{log_id}")
+def delete_rays_vehicle_log(log_id: int):
+    supabase.table("rays_vehicle_logs").delete().eq("id", log_id).execute()
+    return {"deleted": True}
+ 
+ 
+# ── RAYS MACHINE LOGS ─────────────────────────────────────────────
+ 
+RAYS_MACHINE_COLUMNS = {
+    "vehicle_id","date","hours","rate","site",
+    "parts_name","parts_amount","service_amount","note"
+}
+ 
+@app.get("/rays/machine-logs/{vehicle_id}")
+def get_rays_machine_logs(vehicle_id: int):
+    return supabase.table("rays_machine_logs") \
+        .select("*") \
+        .eq("vehicle_id", vehicle_id) \
+        .order("date", desc=True) \
+        .execute().data
+ 
+@app.post("/rays/machine-logs")
+def add_rays_machine_log(item: RaysMachineLogCreate):
+    data = {k: v for k, v in item.dict().items()
+            if k in RAYS_MACHINE_COLUMNS and v is not None}
+    return supabase.table("rays_machine_logs").insert(data).execute().data
+ 
+@app.delete("/rays/machine-logs/{log_id}")
+def delete_rays_machine_log(log_id: int):
+    supabase.table("rays_machine_logs").delete().eq("id", log_id).execute()
+    return {"deleted": True}
+ 
+ 
+# ── DRIVER WEEKLY SALARY ──────────────────────────────────────────
+ 
+@app.get("/driver-salary/{vehicle_id}")
+def get_driver_salary(vehicle_id: int):
+    return supabase.table("driver_salary") \
+        .select("*") \
+        .eq("vehicle_id", vehicle_id) \
+        .order("week_start", desc=True) \
+        .execute().data
+ 
+@app.post("/driver-salary")
+def add_driver_salary(item: DriverSalaryCreate):
+    data = {k: v for k, v in item.dict().items() if v is not None}
+    return supabase.table("driver_salary").insert(data).execute().data
+ 
+@app.patch("/driver-salary/{salary_id}")
+def update_driver_salary(salary_id: int, data: DriverSalaryUpdate):
+    update = {k: v for k, v in data.dict().items() if v is not None}
+    return supabase.table("driver_salary").update(update).eq("id", salary_id).execute().data
+ 
+@app.delete("/driver-salary/{salary_id}")
+def delete_driver_salary(salary_id: int):
+    supabase.table("driver_salary").delete().eq("id", salary_id).execute()
+    return {"deleted": True}
+     
