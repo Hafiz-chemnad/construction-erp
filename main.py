@@ -18,6 +18,7 @@ origins = [
     "http://127.0.0.1:5500",
     "http://localhost:5500",
     "https://chic-vacherin-b8782a.netlify.app",
+    "https://rococo-kulfi-69d6d2.netlify.app",
 ]
 
 app.add_middleware(
