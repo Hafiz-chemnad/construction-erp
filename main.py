@@ -161,39 +161,43 @@ class VehicleUpdate(BaseModel):
     driver_name: Optional[str]  = None
     is_active:   Optional[bool] = None
 
-# Thoofan / Other log (hours-based rent — unchanged)
-class VehicleLogCreate(BaseModel):
-    vehicle_id:     int
-    date:           str
-    hours:          Optional[float] = None
-    rate:           Optional[float] = None
-    site:           Optional[str]   = None
-    parts_name:     Optional[str]   = None
-    parts_amount:   float           = 0
-    service_amount: float           = 0
-    note:           Optional[str]   = None
+class VehicleLogBase(BaseModel):
+    vehicle_id: int
+    date: str
+    site: Optional[str] = None
+    driver_name: Optional[str] = None
+    item: Optional[str] = None
+    party_name: Optional[str] = None
+    party_qty: float = 0
+    base_price: float = 0
+    total_price: float = 0
+    vehicle_rent: float = 0
+    total_amount: float = 0
+    thoofan_giving_balance: float = 0
+    final_balance: float = 0
+    byhand_amount: float = 0
+    load_qty: float = 0
+    trip_rate: float = 0
+    trip_amount: float = 0
+    total_trip_amount: float = 0
+    diesel_amount: float = 0
+    km: float = 0
+    rto_amount: float = 0
+    parts_name: Optional[str] = None
+    parts_amount: float = 0
+    service_amount: float = 0
+    byhand_balance: float = 0
+    trip_balance: float = 0
+    note: Optional[str] = None
 
-# Rays vehicle trip log — UPDATED with new fields
-class RaysVehicleLogCreate(BaseModel):
-    vehicle_id:         int
-    date:               str
-    driver_name:        Optional[str]   = None
-    items:              Optional[str]   = None    # what was carried
-    site:               Optional[str]   = None
-    load_qty:           Optional[float] = None    # number of loads/trips
-    trip_rate:          Optional[float] = None    # rate per trip
-    trip_amount:        float           = 0       # load_qty × trip_rate
-    total_trip_amount:  float           = 0       # final billed amount
-    diesel_amount:      float           = 0
-    km:                 Optional[float] = None
-    rto_amount:         float           = 0
-    parts_name:         Optional[str]   = None
-    parts_amount:       float           = 0
-    service_amount:     float           = 0
-    byhand_balance:     float           = 0       # cash given by hand
-    trip_balance:       float           = 0       # total_trip_amount − byhand_balance
-    note:               Optional[str]   = None
+class ThoofanLogCreate(VehicleLogBase):
+    pass  # Ready for future Thoofan-specific fields
 
+class RaysLogCreate(VehicleLogBase):
+    pass  # Ready for future Rays-specific fields
+
+class OtherLogCreate(VehicleLogBase):
+    pass  # Ready for future Other-specific fields
 class RaysMachineLogCreate(BaseModel):
     vehicle_id:     int
     date:           str
@@ -578,7 +582,14 @@ def delete_vehicle(vehicle_id: int):
     supabase.table("vehicles").update({"is_active": False}).eq("id", vehicle_id).execute()
     return {"deleted": True}
 
-
+UNIFIED_LOG_COLS = {
+    "vehicle_id", "date", "site", "driver_name", "item", "party_name",
+    "party_qty", "base_price", "total_price", "vehicle_rent", "total_amount",
+    "thoofan_giving_balance", "final_balance", "byhand_amount", "load_qty",
+    "trip_rate", "trip_amount", "total_trip_amount", "diesel_amount", "km",
+    "rto_amount", "parts_name", "parts_amount", "service_amount",
+    "byhand_balance", "trip_balance", "note"
+}
 # ── THOOFAN LOGS ──────────────────────────────────────────────────
 
 THOOFAN_LOG_COLS = {
@@ -593,9 +604,9 @@ def get_thoofan_logs(vehicle_id: int):
         .order("date", desc=True).execute().data
 
 @app.post("/vehicle-logs/thoofan")
-def add_thoofan_log(item: VehicleLogCreate):
+def add_thoofan_log(item: ThoofanLogCreate):
     data = {k: v for k, v in item.dict().items()
-            if k in THOOFAN_LOG_COLS and v is not None}
+            if k in UNIFIED_LOG_COLS and v is not None}
     return supabase.table("thoofan_logs").insert(data).execute().data
 
 @app.delete("/vehicle-logs/thoofan/{log_id}")
@@ -618,9 +629,9 @@ def get_other_logs(vehicle_id: int):
         .order("date", desc=True).execute().data
 
 @app.post("/vehicle-logs/other")
-def add_other_log(item: VehicleLogCreate):
+def add_other_log(item: OtherLogCreate):
     data = {k: v for k, v in item.dict().items()
-            if k in OTHER_LOG_COLS and v is not None}
+            if k in UNIFIED_LOG_COLS and v is not None}
     return supabase.table("other_vehicle_logs").insert(data).execute().data
 
 @app.delete("/vehicle-logs/other/{log_id}")
@@ -646,12 +657,12 @@ def get_rays_vehicle_logs(vehicle_id: int):
         .order("date", desc=True).execute().data
 
 @app.post("/rays/vehicle-logs")
-def add_rays_vehicle_log(item: RaysVehicleLogCreate):
-    # Auto-calculate trip_balance server-side as well (safety check)
+def add_rays_vehicle_log(item: RaysLogCreate):
     d = item.dict()
+    # Auto-calculate trip_balance server-side as well (safety check)
     d["trip_balance"] = d.get("total_trip_amount", 0) - d.get("byhand_balance", 0)
     data = {k: v for k, v in d.items()
-            if k in RAYS_VEHICLE_COLS and v is not None}
+            if k in UNIFIED_LOG_COLS and v is not None}
     return supabase.table("rays_vehicle_logs").insert(data).execute().data
 
 @app.delete("/rays/vehicle-logs/{log_id}")
