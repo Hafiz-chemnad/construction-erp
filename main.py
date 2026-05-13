@@ -139,22 +139,28 @@ class FinishWork(BaseModel):
     final_bill_amount: float
 
 
+# ═══════════════════════════════════════════════════════════════════
+#  main.py — VEHICLE MODULE v2 (REPLACE previous vehicle additions)
+#  Replace everything after the "── VEHICLE MODELS ──" comment
+#  in your main.py with this entire block
+# ═══════════════════════════════════════════════════════════════════
+
 # ── VEHICLE MODELS ────────────────────────────────────────────────
- 
+
 class VehicleCreate(BaseModel):
-    company:     str             # 'thoofan' | 'rays' | 'other'
-    type:        str             # 'vehicle' | 'machine'
+    company:     str
+    type:        str
     name:        str
     reg_number:  Optional[str]  = None
     driver_name: Optional[str]  = None
- 
+
 class VehicleUpdate(BaseModel):
     name:        Optional[str]  = None
     reg_number:  Optional[str]  = None
     driver_name: Optional[str]  = None
     is_active:   Optional[bool] = None
- 
-# Thoofan / Other log (hours-based rent)
+
+# Thoofan / Other log (hours-based rent — unchanged)
 class VehicleLogCreate(BaseModel):
     vehicle_id:     int
     date:           str
@@ -165,24 +171,28 @@ class VehicleLogCreate(BaseModel):
     parts_amount:   float           = 0
     service_amount: float           = 0
     note:           Optional[str]   = None
- 
-# Rays vehicle trip log
+
+# Rays vehicle trip log — UPDATED with new fields
 class RaysVehicleLogCreate(BaseModel):
-    vehicle_id:     int
-    date:           str
-    driver_name:    Optional[str]   = None
-    trip_salary:    float           = 0
-    load_quantity:  Optional[str]   = None
-    site:           Optional[str]   = None
-    diesel_source:  Optional[str]   = None
-    diesel_amount:  float           = 0
-    rto_amount:     float           = 0
-    parts_name:     Optional[str]   = None
-    parts_amount:   float           = 0
-    service_amount: float           = 0
-    note:           Optional[str]   = None
- 
-# Rays machine log (same as thoofan log)
+    vehicle_id:         int
+    date:               str
+    driver_name:        Optional[str]   = None
+    items:              Optional[str]   = None    # what was carried
+    site:               Optional[str]   = None
+    load_qty:           Optional[float] = None    # number of loads/trips
+    trip_rate:          Optional[float] = None    # rate per trip
+    trip_amount:        float           = 0       # load_qty × trip_rate
+    total_trip_amount:  float           = 0       # final billed amount
+    diesel_amount:      float           = 0
+    km:                 Optional[float] = None
+    rto_amount:         float           = 0
+    parts_name:         Optional[str]   = None
+    parts_amount:       float           = 0
+    service_amount:     float           = 0
+    byhand_balance:     float           = 0       # cash given by hand
+    trip_balance:       float           = 0       # total_trip_amount − byhand_balance
+    note:               Optional[str]   = None
+
 class RaysMachineLogCreate(BaseModel):
     vehicle_id:     int
     date:           str
@@ -193,20 +203,39 @@ class RaysMachineLogCreate(BaseModel):
     parts_amount:   float           = 0
     service_amount: float           = 0
     note:           Optional[str]   = None
- 
+
+# Driver salary — UPDATED with new fields
 class DriverSalaryCreate(BaseModel):
-    vehicle_id:  int
-    driver_name: str
-    week_start:  str
-    week_end:    str
-    amount:      float
-    paid:        bool           = False
-    note:        Optional[str]  = None
- 
+    vehicle_id:      int
+    driver_name:     str
+    week_start:      str
+    week_end:        str
+    advance:         float          = 0     # advance already given
+    byhand_balance:  float          = 0     # total cash by hand this week
+    trip_balance:    float          = 0     # total trip earnings this week
+    salary_balance:  float          = 0     # trip_balance − byhand − advance
+    note:            Optional[str]  = None
+
 class DriverSalaryUpdate(BaseModel):
-    paid:   Optional[bool]  = None
-    amount: Optional[float] = None
-    note:   Optional[str]   = None
+    advance:        Optional[float] = None
+    byhand_balance: Optional[float] = None
+    trip_balance:   Optional[float] = None
+    salary_balance: Optional[float] = None
+    note:           Optional[str]   = None
+
+# Vehicle parts ledger
+class VehiclePartCreate(BaseModel):
+    vehicle_id:   int
+    name:         str
+    qty:          Optional[float] = None
+    base_price:   Optional[float] = None
+    total_price:  Optional[float] = None
+    vehicle_cost: Optional[float] = None
+    date:         Optional[str]   = None
+    note:         Optional[str]   = None
+
+
+
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 
 def recalculate_balance(work_id: int):
@@ -521,167 +550,206 @@ def finish_work(work_id: int, data: FinishWork):
 
     return {"status": "FINISHED", "final_bill_amount": data.final_bill_amount}
 
-# ── VEHICLE REGISTRY ROUTES ───────────────────────────────────────
- 
+# ── VEHICLE REGISTRY ──────────────────────────────────────────────
+
 @app.get("/vehicles")
 def get_vehicles(company: str):
     return supabase.table("vehicles") \
         .select("*") \
         .eq("company", company) \
         .eq("is_active", True) \
-        .order("type") \
-        .order("name") \
+        .order("type").order("name") \
         .execute().data
- 
+
 @app.post("/vehicles")
 def add_vehicle(item: VehicleCreate):
     data = {k: v for k, v in item.dict().items() if v is not None}
     data["is_active"] = True
     return supabase.table("vehicles").insert(data).execute().data
- 
+
 @app.patch("/vehicles/{vehicle_id}")
 def update_vehicle(vehicle_id: int, data: VehicleUpdate):
-    update = {k: v for k, v in data.dict().items() if v is not None}
-    return supabase.table("vehicles").update(update).eq("id", vehicle_id).execute().data
- 
+    upd = {k: v for k, v in data.dict().items() if v is not None}
+    return supabase.table("vehicles").update(upd).eq("id", vehicle_id).execute().data
+
 @app.delete("/vehicles/{vehicle_id}")
 def delete_vehicle(vehicle_id: int):
-    # Soft delete — just mark inactive
     supabase.table("vehicles").update({"is_active": False}).eq("id", vehicle_id).execute()
     return {"deleted": True}
- 
- 
+
+
 # ── THOOFAN LOGS ──────────────────────────────────────────────────
- 
-THOOFAN_LOG_COLUMNS = {
+
+THOOFAN_LOG_COLS = {
     "vehicle_id","date","hours","rate","site",
     "parts_name","parts_amount","service_amount","note"
 }
- 
+
 @app.get("/vehicle-logs/thoofan/{vehicle_id}")
 def get_thoofan_logs(vehicle_id: int):
     return supabase.table("thoofan_logs") \
-        .select("*") \
-        .eq("vehicle_id", vehicle_id) \
-        .order("date", desc=True) \
-        .execute().data
- 
+        .select("*").eq("vehicle_id", vehicle_id) \
+        .order("date", desc=True).execute().data
+
 @app.post("/vehicle-logs/thoofan")
 def add_thoofan_log(item: VehicleLogCreate):
     data = {k: v for k, v in item.dict().items()
-            if k in THOOFAN_LOG_COLUMNS and v is not None}
+            if k in THOOFAN_LOG_COLS and v is not None}
     return supabase.table("thoofan_logs").insert(data).execute().data
- 
+
 @app.delete("/vehicle-logs/thoofan/{log_id}")
 def delete_thoofan_log(log_id: int):
     supabase.table("thoofan_logs").delete().eq("id", log_id).execute()
     return {"deleted": True}
- 
- 
+
+
 # ── OTHER COMPANY LOGS ────────────────────────────────────────────
- 
-OTHER_LOG_COLUMNS = {
+
+OTHER_LOG_COLS = {
     "vehicle_id","date","hours","rate","site",
     "parts_name","parts_amount","service_amount","note"
 }
- 
+
 @app.get("/vehicle-logs/other/{vehicle_id}")
 def get_other_logs(vehicle_id: int):
     return supabase.table("other_vehicle_logs") \
-        .select("*") \
-        .eq("vehicle_id", vehicle_id) \
-        .order("date", desc=True) \
-        .execute().data
- 
+        .select("*").eq("vehicle_id", vehicle_id) \
+        .order("date", desc=True).execute().data
+
 @app.post("/vehicle-logs/other")
 def add_other_log(item: VehicleLogCreate):
     data = {k: v for k, v in item.dict().items()
-            if k in OTHER_LOG_COLUMNS and v is not None}
+            if k in OTHER_LOG_COLS and v is not None}
     return supabase.table("other_vehicle_logs").insert(data).execute().data
- 
+
 @app.delete("/vehicle-logs/other/{log_id}")
 def delete_other_log(log_id: int):
     supabase.table("other_vehicle_logs").delete().eq("id", log_id).execute()
     return {"deleted": True}
- 
- 
+
+
 # ── RAYS VEHICLE TRIP LOGS ────────────────────────────────────────
- 
-RAYS_VEHICLE_COLUMNS = {
-    "vehicle_id","date","driver_name","trip_salary","load_quantity","site",
-    "diesel_source","diesel_amount","rto_amount",
-    "parts_name","parts_amount","service_amount","note"
+
+RAYS_VEHICLE_COLS = {
+    "vehicle_id","date","driver_name","items","site",
+    "load_qty","trip_rate","trip_amount","total_trip_amount",
+    "diesel_amount","km","rto_amount",
+    "parts_name","parts_amount","service_amount",
+    "byhand_balance","trip_balance","note"
 }
- 
+
 @app.get("/rays/vehicle-logs/{vehicle_id}")
 def get_rays_vehicle_logs(vehicle_id: int):
     return supabase.table("rays_vehicle_logs") \
-        .select("*") \
-        .eq("vehicle_id", vehicle_id) \
-        .order("date", desc=True) \
-        .execute().data
- 
+        .select("*").eq("vehicle_id", vehicle_id) \
+        .order("date", desc=True).execute().data
+
 @app.post("/rays/vehicle-logs")
 def add_rays_vehicle_log(item: RaysVehicleLogCreate):
-    data = {k: v for k, v in item.dict().items()
-            if k in RAYS_VEHICLE_COLUMNS and v is not None}
+    # Auto-calculate trip_balance server-side as well (safety check)
+    d = item.dict()
+    d["trip_balance"] = d.get("total_trip_amount", 0) - d.get("byhand_balance", 0)
+    data = {k: v for k, v in d.items()
+            if k in RAYS_VEHICLE_COLS and v is not None}
     return supabase.table("rays_vehicle_logs").insert(data).execute().data
- 
+
 @app.delete("/rays/vehicle-logs/{log_id}")
 def delete_rays_vehicle_log(log_id: int):
     supabase.table("rays_vehicle_logs").delete().eq("id", log_id).execute()
     return {"deleted": True}
- 
- 
+
+
 # ── RAYS MACHINE LOGS ─────────────────────────────────────────────
- 
-RAYS_MACHINE_COLUMNS = {
+
+RAYS_MACHINE_COLS = {
     "vehicle_id","date","hours","rate","site",
     "parts_name","parts_amount","service_amount","note"
 }
- 
+
 @app.get("/rays/machine-logs/{vehicle_id}")
 def get_rays_machine_logs(vehicle_id: int):
     return supabase.table("rays_machine_logs") \
-        .select("*") \
-        .eq("vehicle_id", vehicle_id) \
-        .order("date", desc=True) \
-        .execute().data
- 
+        .select("*").eq("vehicle_id", vehicle_id) \
+        .order("date", desc=True).execute().data
+
 @app.post("/rays/machine-logs")
 def add_rays_machine_log(item: RaysMachineLogCreate):
     data = {k: v for k, v in item.dict().items()
-            if k in RAYS_MACHINE_COLUMNS and v is not None}
+            if k in RAYS_MACHINE_COLS and v is not None}
     return supabase.table("rays_machine_logs").insert(data).execute().data
- 
+
 @app.delete("/rays/machine-logs/{log_id}")
 def delete_rays_machine_log(log_id: int):
     supabase.table("rays_machine_logs").delete().eq("id", log_id).execute()
     return {"deleted": True}
- 
- 
-# ── DRIVER WEEKLY SALARY ──────────────────────────────────────────
- 
+
+
+# ── DRIVER SALARY ─────────────────────────────────────────────────
+
+SALARY_COLS = {
+    "vehicle_id","driver_name","week_start","week_end",
+    "advance","byhand_balance","trip_balance","salary_balance","note"
+}
+
 @app.get("/driver-salary/{vehicle_id}")
 def get_driver_salary(vehicle_id: int):
     return supabase.table("driver_salary") \
-        .select("*") \
-        .eq("vehicle_id", vehicle_id) \
-        .order("week_start", desc=True) \
-        .execute().data
- 
+        .select("*").eq("vehicle_id", vehicle_id) \
+        .order("week_start", desc=True).execute().data
+
 @app.post("/driver-salary")
 def add_driver_salary(item: DriverSalaryCreate):
-    data = {k: v for k, v in item.dict().items() if v is not None}
+    # Auto-calculate salary_balance server-side
+    d = item.dict()
+    d["salary_balance"] = d.get("trip_balance", 0) - d.get("byhand_balance", 0) - d.get("advance", 0)
+    data = {k: v for k, v in d.items()
+            if k in SALARY_COLS and v is not None}
     return supabase.table("driver_salary").insert(data).execute().data
- 
+
 @app.patch("/driver-salary/{salary_id}")
 def update_driver_salary(salary_id: int, data: DriverSalaryUpdate):
-    update = {k: v for k, v in data.dict().items() if v is not None}
-    return supabase.table("driver_salary").update(update).eq("id", salary_id).execute().data
- 
+    upd = {k: v for k, v in data.dict().items() if v is not None}
+    # Recalculate salary_balance if any component changed
+    if upd:
+        existing = supabase.table("driver_salary") \
+            .select("trip_balance,byhand_balance,advance") \
+            .eq("id", salary_id).single().execute()
+        if existing.data:
+            trip    = upd.get("trip_balance",   existing.data.get("trip_balance",   0))
+            byhand  = upd.get("byhand_balance", existing.data.get("byhand_balance", 0))
+            advance = upd.get("advance",        existing.data.get("advance",        0))
+            upd["salary_balance"] = (trip or 0) - (byhand or 0) - (advance or 0)
+    return supabase.table("driver_salary").update(upd).eq("id", salary_id).execute().data
+
 @app.delete("/driver-salary/{salary_id}")
 def delete_driver_salary(salary_id: int):
     supabase.table("driver_salary").delete().eq("id", salary_id).execute()
+    return {"deleted": True}
+
+
+# ── VEHICLE PARTS LEDGER ──────────────────────────────────────────
+
+PARTS_COLS = {
+    "vehicle_id","name","qty","base_price","total_price","vehicle_cost","date","note"
+}
+
+@app.get("/vehicle-parts/{vehicle_id}")
+def get_vehicle_parts(vehicle_id: int):
+    return supabase.table("vehicle_parts") \
+        .select("*").eq("vehicle_id", vehicle_id) \
+        .order("date", desc=True).execute().data
+
+@app.post("/vehicle-parts")
+def add_vehicle_part(item: VehiclePartCreate):
+    d = item.dict()
+    # Auto-calculate total_price = qty × base_price if not provided
+    if not d.get("total_price") and d.get("qty") and d.get("base_price"):
+        d["total_price"] = d["qty"] * d["base_price"]
+    data = {k: v for k, v in d.items() if k in PARTS_COLS and v is not None}
+    return supabase.table("vehicle_parts").insert(data).execute().data
+
+@app.delete("/vehicle-parts/{part_id}")
+def delete_vehicle_part(part_id: int):
+    supabase.table("vehicle_parts").delete().eq("id", part_id).execute()
     return {"deleted": True}
      
