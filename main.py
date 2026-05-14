@@ -607,6 +607,7 @@ def get_thoofan_logs(vehicle_id: int):
 def add_thoofan_log(item: ThoofanLogCreate):
     data = {k: v for k, v in item.dict().items()
             if k in UNIFIED_LOG_COLS and v is not None}
+    data.pop("total_amount", None)         
     return supabase.table("thoofan_logs").insert(data).execute().data
 
 @app.delete("/vehicle-logs/thoofan/{log_id}")
@@ -632,6 +633,7 @@ def get_other_logs(vehicle_id: int):
 def add_other_log(item: OtherLogCreate):
     data = {k: v for k, v in item.dict().items()
             if k in UNIFIED_LOG_COLS and v is not None}
+    data.pop("total_amount", None)        
     return supabase.table("other_vehicle_logs").insert(data).execute().data
 
 @app.delete("/vehicle-logs/other/{log_id}")
@@ -663,6 +665,7 @@ def add_rays_vehicle_log(item: RaysLogCreate):
     d["trip_balance"] = d.get("total_trip_amount", 0) - d.get("byhand_balance", 0)
     data = {k: v for k, v in d.items()
             if k in UNIFIED_LOG_COLS and v is not None}
+    data.pop("total_amount", None)        
     return supabase.table("rays_vehicle_logs").insert(data).execute().data
 
 @app.delete("/rays/vehicle-logs/{log_id}")
