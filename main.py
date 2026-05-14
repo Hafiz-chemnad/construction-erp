@@ -860,4 +860,51 @@ def add_vehicle_part(item: VehiclePartCreate):
 def delete_vehicle_part(part_id: int):
     supabase.table("vehicle_parts").delete().eq("id", part_id).execute()
     return {"deleted": True}
+
+# ── REPORTS & LEDGERS ─────────────────────────────────────────────
+
+@app.get("/reports/check-logs")
+def check_driver_logs(driver: str = "", start_date: str = "2000-01-01", end_date: str = "2100-01-01"):
+    # We use 'ilike' for a fuzzy match. If driver is left blank, it fetches totals for ALL drivers!
+    search_term = f"%{driver}%"
+    
+    # 1. Fetch Advances from Salary table
+    salary = supabase.table("driver_salary").select("advance") \
+        .ilike("driver_name", search_term) \
+        .gte("week_start", start_date).lte("week_start", end_date).execute()
+        
+    # 2. Fetch Thoofan & ByHand from Rays
+    rays = supabase.table("rays_vehicle_logs").select("thoofan_giving_balance, byhand_amount") \
+        .ilike("driver_name", search_term) \
+        .gte("date", start_date).lte("date", end_date).execute()
+        
+    # 3. Fetch from Thoofan
+    thoofan = supabase.table("thoofan_logs").select("thoofan_giving_balance, byhand_amount") \
+        .ilike("driver_name", search_term) \
+        .gte("date", start_date).lte("date", end_date).execute()
+        
+    # 4. Fetch from Other
+    other = supabase.table("other_vehicle_logs").select("thoofan_giving_balance, byhand_amount") \
+        .ilike("driver_name", search_term) \
+        .gte("date", start_date).lte("date", end_date).execute()
+
+    # Sum up the Advances
+    total_advance = sum(float(r.get("advance") or 0) for r in salary.data)
+    
+    # Helper function to sum Thoofan and ByHand amounts
+    def sum_logs(data):
+        t_bal = sum(float(r.get("thoofan_giving_balance") or 0) for r in data)
+        b_amt = sum(float(r.get("byhand_amount") or 0) for r in data)
+        return t_bal, b_amt
+
+    r_t, r_b = sum_logs(rays.data)
+    t_t, t_b = sum_logs(thoofan.data)
+    o_t, o_b = sum_logs(other.data)
+
+    return {
+        "driver": driver,
+        "total_advance": total_advance,
+        "total_thoofan_giving": r_t + t_t + o_t,
+        "total_byhand_given": r_b + t_b + o_b
+    }    
      
