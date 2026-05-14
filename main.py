@@ -164,6 +164,8 @@ class VehicleUpdate(BaseModel):
 class VehicleLogBase(BaseModel):
     vehicle_id: int
     date: str
+    hours: float = 0     # 👈 ADD THIS
+    rate: float = 0
     site: Optional[str] = None
     driver_name: Optional[str] = None
     item: Optional[str] = None
@@ -583,7 +585,7 @@ def delete_vehicle(vehicle_id: int):
     return {"deleted": True}
 
 UNIFIED_LOG_COLS = {
-    "vehicle_id", "date", "site", "driver_name", "item", "party_name",
+    "vehicle_id", "date","hours", "rate", "site", "driver_name", "item", "party_name",
     "party_qty", "base_price", "total_price", "vehicle_rent", "total_amount",
     "thoofan_giving_balance", "final_balance", "byhand_amount", "load_qty",
     "trip_rate", "trip_amount", "total_trip_amount", "diesel_amount", "km",
