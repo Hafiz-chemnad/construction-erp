@@ -198,6 +198,33 @@ class RaysLogCreate(VehicleLogBase):
 
 class OtherLogCreate(VehicleLogBase):
     pass  # Ready for future Other-specific fields
+
+class VehicleLogUpdate(BaseModel):
+    date: Optional[str] = None
+    site: Optional[str] = None
+    driver_name: Optional[str] = None
+    item: Optional[str] = None
+    party_name: Optional[str] = None
+    party_qty: Optional[float] = None
+    base_price: Optional[float] = None
+    total_price: Optional[float] = None
+    vehicle_rent: Optional[float] = None
+    thoofan_giving_balance: Optional[float] = None
+    final_balance: Optional[float] = None
+    byhand_amount: Optional[float] = None
+    load_qty: Optional[float] = None
+    trip_rate: Optional[float] = None
+    trip_amount: Optional[float] = None
+    total_trip_amount: Optional[float] = None
+    diesel_amount: Optional[float] = None
+    km: Optional[float] = None
+    rto_amount: Optional[float] = None
+    parts_name: Optional[str] = None
+    parts_amount: Optional[float] = None
+    service_amount: Optional[float] = None
+    byhand_balance: Optional[float] = None
+    trip_balance: Optional[float] = None
+    note: Optional[str] = None
 class RaysMachineLogCreate(BaseModel):
     vehicle_id:     int
     date:           str
@@ -220,6 +247,15 @@ class ThoofanMachineLogCreate(BaseModel):
     service_amount: float           = 0
     note:           Optional[str]   = None    
 
+class ThoofanMachineLogUpdate(BaseModel):
+    date:           Optional[str]   = None
+    hours:          Optional[float] = None
+    rate:           Optional[float] = None
+    site:           Optional[str]   = None
+    parts_name:     Optional[str]   = None
+    parts_amount:   Optional[float] = None
+    service_amount: Optional[float] = None
+    note:           Optional[str]   = None
 # Driver salary — UPDATED with new fields
 class DriverSalaryCreate(BaseModel):
     vehicle_id:      int
@@ -647,12 +683,37 @@ def add_thoofan_machine_log(item: ThoofanMachineLogCreate):
 def delete_thoofan_machine_log(log_id: int):
     supabase.table("thoofan_machine_logs").delete().eq("id", log_id).execute()
     return {"deleted": True}
+
+@app.patch("/thoofan/machine-logs/{log_id}")
+def update_thoofan_machine_log(log_id: int, data: ThoofanMachineLogUpdate):
+    # Only update fields that were actually sent
+    upd = {k: v for k, v in data.dict().items() if v is not None}
+    if not upd:
+        return {"message": "Nothing to update"}
+    return supabase.table("thoofan_machine_logs").update(upd).eq("id", log_id).execute().data
 # ── OTHER COMPANY LOGS ────────────────────────────────────────────
 
 OTHER_LOG_COLS = {
     "vehicle_id","date","hours","rate","site",
     "parts_name","parts_amount","service_amount","note"
 }
+@app.patch("/vehicle-logs/thoofan/{log_id}")
+def update_thoofan_log(log_id: int, data: VehicleLogUpdate):
+    upd = {k: v for k, v in data.dict().items() if v is not None and k in UNIFIED_LOG_COLS}
+    upd.pop("total_amount", None) # Prevent Supabase crash
+    return supabase.table("thoofan_logs").update(upd).eq("id", log_id).execute().data
+
+@app.patch("/vehicle-logs/other/{log_id}")
+def update_other_log(log_id: int, data: VehicleLogUpdate):
+    upd = {k: v for k, v in data.dict().items() if v is not None and k in UNIFIED_LOG_COLS}
+    upd.pop("total_amount", None) # Prevent Supabase crash
+    return supabase.table("other_vehicle_logs").update(upd).eq("id", log_id).execute().data
+
+@app.patch("/rays/vehicle-logs/{log_id}")
+def update_rays_vehicle_log(log_id: int, data: VehicleLogUpdate):
+    upd = {k: v for k, v in data.dict().items() if v is not None and k in UNIFIED_LOG_COLS}
+    upd.pop("total_amount", None) # Prevent Supabase crash
+    return supabase.table("rays_vehicle_logs").update(upd).eq("id", log_id).execute().data
 
 @app.get("/vehicle-logs/other/{vehicle_id}")
 def get_other_logs(vehicle_id: int):
