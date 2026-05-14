@@ -164,8 +164,6 @@ class VehicleUpdate(BaseModel):
 class VehicleLogBase(BaseModel):
     vehicle_id: int
     date: str
-    hours: float = 0     # 👈 ADD THIS
-    rate: float = 0
     site: Optional[str] = None
     driver_name: Optional[str] = None
     item: Optional[str] = None
@@ -210,6 +208,17 @@ class RaysMachineLogCreate(BaseModel):
     parts_amount:   float           = 0
     service_amount: float           = 0
     note:           Optional[str]   = None
+
+class ThoofanMachineLogCreate(BaseModel):
+    vehicle_id:     int
+    date:           str
+    hours:          Optional[float] = None
+    rate:           Optional[float] = None
+    site:           Optional[str]   = None
+    parts_name:     Optional[str]   = None
+    parts_amount:   float           = 0
+    service_amount: float           = 0
+    note:           Optional[str]   = None    
 
 # Driver salary — UPDATED with new fields
 class DriverSalaryCreate(BaseModel):
@@ -585,7 +594,7 @@ def delete_vehicle(vehicle_id: int):
     return {"deleted": True}
 
 UNIFIED_LOG_COLS = {
-    "vehicle_id", "date","hours", "rate", "site", "driver_name", "item", "party_name",
+    "vehicle_id", "date", "site", "driver_name", "item", "party_name",
     "party_qty", "base_price", "total_price", "vehicle_rent", "total_amount",
     "thoofan_giving_balance", "final_balance", "byhand_amount", "load_qty",
     "trip_rate", "trip_amount", "total_trip_amount", "diesel_amount", "km",
@@ -617,7 +626,27 @@ def delete_thoofan_log(log_id: int):
     supabase.table("thoofan_logs").delete().eq("id", log_id).execute()
     return {"deleted": True}
 
+THOOFAN_MACHINE_COLS = {
+    "vehicle_id","date","hours","rate","site",
+    "parts_name","parts_amount","service_amount","note"
+}
 
+@app.get("/thoofan/machine-logs/{vehicle_id}")
+def get_thoofan_machine_logs(vehicle_id: int):
+    return supabase.table("thoofan_machine_logs") \
+        .select("*").eq("vehicle_id", vehicle_id) \
+        .order("date", desc=True).execute().data
+
+@app.post("/thoofan/machine-logs")
+def add_thoofan_machine_log(item: ThoofanMachineLogCreate):
+    data = {k: v for k, v in item.dict().items()
+            if k in THOOFAN_MACHINE_COLS and v is not None}
+    return supabase.table("thoofan_machine_logs").insert(data).execute().data
+
+@app.delete("/thoofan/machine-logs/{log_id}")
+def delete_thoofan_machine_log(log_id: int):
+    supabase.table("thoofan_machine_logs").delete().eq("id", log_id).execute()
+    return {"deleted": True}
 # ── OTHER COMPANY LOGS ────────────────────────────────────────────
 
 OTHER_LOG_COLS = {
