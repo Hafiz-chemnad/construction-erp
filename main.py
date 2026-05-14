@@ -754,7 +754,7 @@ def get_rays_vehicle_logs(vehicle_id: int):
 def add_rays_vehicle_log(item: RaysLogCreate):
     d = item.dict()
     # Auto-calculate trip_balance server-side as well (safety check)
-    d["trip_balance"] = d.get("total_trip_amount", 0) - d.get("byhand_balance", 0)
+    d["trip_balance"] = d.get("byhand_balance", 0) - d.get("vehicle_rent", 0)
     data = {k: v for k, v in d.items()
             if k in UNIFIED_LOG_COLS and v is not None}
     data.pop("total_amount", None)        
@@ -808,7 +808,7 @@ def get_driver_salary(vehicle_id: int):
 def add_driver_salary(item: DriverSalaryCreate):
     # Auto-calculate salary_balance server-side
     d = item.dict()
-    d["salary_balance"] = d.get("trip_balance", 0) - d.get("byhand_balance", 0) - d.get("advance", 0)
+    d["salary_balance"] = d.get("trip_balance", 0) - d.get("advance", 0)
     data = {k: v for k, v in d.items()
             if k in SALARY_COLS and v is not None}
     return supabase.table("driver_salary").insert(data).execute().data
