@@ -932,16 +932,16 @@ def check_driver_logs(driver: str = "", start_date: str = "2000-01-01", end_date
 def get_global_driver_trips(driver: str, start_date: str, end_date: str):
     search_term = f"%{driver}%"
     
-    # 1. Ask Rays Trucks
-    rays = supabase.table("rays_vehicle_logs").select("total_trip_amount, trip_balance, advance") \
+    # 1. Ask Rays Trucks (Removed 'advance')
+    rays = supabase.table("rays_vehicle_logs").select("total_trip_amount, trip_balance") \
         .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
         
-    # 2. Ask Thoofan Trucks
-    thoofan = supabase.table("thoofan_logs").select("total_trip_amount, trip_balance, advance") \
+    # 2. Ask Thoofan Trucks (Removed 'advance')
+    thoofan = supabase.table("thoofan_logs").select("total_trip_amount, trip_balance") \
         .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
         
-    # 3. Ask Other Trucks
-    other = supabase.table("other_vehicle_logs").select("total_trip_amount, trip_balance, advance") \
+    # 3. Ask Other Trucks (Removed 'advance')
+    other = supabase.table("other_vehicle_logs").select("total_trip_amount, trip_balance") \
         .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
 
     # Combine all trips from all tables
@@ -950,11 +950,10 @@ def get_global_driver_trips(driver: str, start_date: str, end_date: str):
     # Calculate the grand totals
     total_earnings = sum(float(t.get("total_trip_amount") or 0) for t in all_trips)
     total_holding  = sum(float(t.get("trip_balance") or 0) for t in all_trips)
-    total_advance  = sum(float(t.get("advance") or 0) for t in all_trips)
 
     return {
         "driver": driver,
         "total_earnings": total_earnings,
         "total_holding": total_holding,
-        "total_advance": total_advance
-    }     
+        "total_advance": 0 # Set to 0 since you will type it manually on the salary page
+    }
