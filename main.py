@@ -259,7 +259,7 @@ class ThoofanMachineLogUpdate(BaseModel):
     note:           Optional[str]   = None
 # Driver salary — UPDATED with new fields
 class DriverSalaryCreate(BaseModel):
-    vehicle_id:      int
+    vehicle_id:      Optional[int]  = None
     driver_name:     str
     week_start:      str
     week_end:        str
@@ -798,6 +798,11 @@ SALARY_COLS = {
     "vehicle_id","driver_name","week_start","week_end",
     "advance","byhand_balance","trip_balance","salary_balance","note"
 }
+@app.get("/driver-salary-global")
+def get_global_driver_salary():
+    return supabase.table("driver_salary") \
+        .select("*") \
+        .order("week_start", desc=True).execute().data
 
 @app.get("/driver-salary/{vehicle_id}")
 def get_driver_salary(vehicle_id: int):
@@ -908,3 +913,33 @@ def check_driver_logs(driver: str = "", start_date: str = "2000-01-01", end_date
         "total_byhand_given": r_b + t_b + o_b
     }    
      
+@app.get("/reports/global-driver-trips")
+def get_global_driver_trips(driver: str, start_date: str, end_date: str):
+    search_term = f"%{driver}%"
+    
+    # 1. Ask Rays Trucks
+    rays = supabase.table("rays_vehicle_logs").select("total_trip_amount, trip_balance, advance") \
+        .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
+        
+    # 2. Ask Thoofan Trucks
+    thoofan = supabase.table("thoofan_logs").select("total_trip_amount, trip_balance, advance") \
+        .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
+        
+    # 3. Ask Other Trucks
+    other = supabase.table("other_vehicle_logs").select("total_trip_amount, trip_balance, advance") \
+        .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
+
+    # Combine all trips from all tables
+    all_trips = (rays.data or []) + (thoofan.data or []) + (other.data or [])
+
+    # Calculate the grand totals
+    total_earnings = sum(float(t.get("total_trip_amount") or 0) for t in all_trips)
+    total_holding  = sum(float(t.get("trip_balance") or 0) for t in all_trips)
+    total_advance  = sum(float(t.get("advance") or 0) for t in all_trips)
+
+    return {
+        "driver": driver,
+        "total_earnings": total_earnings,
+        "total_holding": total_holding,
+        "total_advance": total_advance
+    }     
