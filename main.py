@@ -839,7 +839,22 @@ def delete_driver_salary(salary_id: int):
     supabase.table("driver_salary").delete().eq("id", salary_id).execute()
     return {"deleted": True}
 
+@app.get("/drivers/active")
+def get_active_drivers():
+    # Fetch driver names from all 3 log tables
+    rays = supabase.table("rays_vehicle_logs").select("driver_name").execute()
+    thoofan = supabase.table("thoofan_logs").select("driver_name").execute()
+    other = supabase.table("other_vehicle_logs").select("driver_name").execute()
 
+    # Use a 'set' to automatically remove any duplicates!
+    unique_drivers = set()
+    for row in (rays.data or []) + (thoofan.data or []) + (other.data or []):
+        name = row.get("driver_name")
+        if name and str(name).strip():
+            unique_drivers.add(str(name).strip())
+            
+    # Return a perfectly alphabetized list
+    return sorted(list(unique_drivers))
 # ── VEHICLE PARTS LEDGER ──────────────────────────────────────────
 
 PARTS_COLS = {
