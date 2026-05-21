@@ -887,72 +887,79 @@ def delete_vehicle_part(part_id: int):
 
 @app.get("/reports/check-logs")
 def check_driver_logs(driver: str = "", start_date: str = "2000-01-01", end_date: str = "2100-01-01"):
-    # We use 'ilike' for a fuzzy match. If driver is left blank, it fetches totals for ALL drivers!
+    # 'ilike' for fuzzy match. Blank driver = totals for ALL drivers.
     search_term = f"%{driver}%"
-    
+
     # 1. Fetch Advances from Salary table
     salary = supabase.table("driver_salary").select("advance") \
         .ilike("driver_name", search_term) \
         .gte("week_start", start_date).lte("week_start", end_date).execute()
-        
-    # 2. Fetch Thoofan & ByHand from Rays
-    rays = supabase.table("rays_vehicle_logs").select("thoofan_giving_balance, byhand_amount") \
-        .ilike("driver_name", search_term) \
-        .gte("date", start_date).lte("date", end_date).execute()
-        
-    # 3. Fetch from Thoofan
-    thoofan = supabase.table("thoofan_logs").select("thoofan_giving_balance, byhand_amount") \
-        .ilike("driver_name", search_term) \
-        .gte("date", start_date).lte("date", end_date).execute()
-        
-    # 4. Fetch from Other
-    other = supabase.table("other_vehicle_logs").select("thoofan_giving_balance, byhand_amount") \
+
+    # 2. Fetch from Rays — thoofan_giving_balance, byhand_amount, final_balance
+    rays = supabase.table("rays_vehicle_logs").select("thoofan_giving_balance, byhand_amount, final_balance") \
         .ilike("driver_name", search_term) \
         .gte("date", start_date).lte("date", end_date).execute()
 
-    # Sum up the Advances
+    # 3. Fetch from Thoofan — byhand_amount only (thoofan_giving_balance excluded from totals)
+    thoofan = supabase.table("thoofan_logs").select("byhand_amount") \
+        .ilike("driver_name", search_term) \
+        .gte("date", start_date).lte("date", end_date).execute()
+
+    # 4. Fetch from Other — thoofan_giving_balance, byhand_amount, final_balance
+    other = supabase.table("other_vehicle_logs").select("thoofan_giving_balance, byhand_amount, final_balance") \
+        .ilike("driver_name", search_term) \
+        .gte("date", start_date).lte("date", end_date).execute()
+
+    # Sum up advances
     total_advance = sum(float(r.get("advance") or 0) for r in salary.data)
-    
-    # Helper function to sum Thoofan and ByHand amounts
-    def sum_logs(data):
-        t_bal = sum(float(r.get("thoofan_giving_balance") or 0) for r in data)
-        b_amt = sum(float(r.get("byhand_amount") or 0) for r in data)
-        return t_bal, b_amt
 
-    r_t, r_b = sum_logs(rays.data)
-    t_t, t_b = sum_logs(thoofan.data)
-    o_t, o_b = sum_logs(other.data)
+    # Thoofan giving balance: Rays + Other only (exclude Thoofan's own thoofan_giving_balance)
+    total_thoofan_giving = (
+        sum(float(r.get("thoofan_giving_balance") or 0) for r in rays.data) +
+        sum(float(r.get("thoofan_giving_balance") or 0) for r in other.data)
+    )
+
+    # By hand given: all three
+    total_byhand_given = (
+        sum(float(r.get("byhand_amount") or 0) for r in rays.data) +
+        sum(float(r.get("byhand_amount") or 0) for r in thoofan.data) +
+        sum(float(r.get("byhand_amount") or 0) for r in other.data)
+    )
+
+    # Final balance: Rays + Other (thoofan doesn't have meaningful final_balance here)
+    total_final_balance = (
+        sum(float(r.get("final_balance") or 0) for r in rays.data) +
+        sum(float(r.get("final_balance") or 0) for r in other.data)
+    )
 
     return {
         "driver": driver,
         "total_advance": total_advance,
-        "total_thoofan_giving": r_t + t_t + o_t,
-        "total_byhand_given": r_b + t_b + o_b
-    }    
+        "total_thoofan_giving": total_thoofan_giving,
+        "total_byhand_given": total_byhand_given,
+        "total_final_balance": total_final_balance
+    }
      
 @app.get("/reports/global-driver-trips")
 def get_global_driver_trips(driver: str, start_date: str, end_date: str):
     search_term = f"%{driver}%"
-    
-    # 🌟 Added "advance" back into these 3 queries
-    rays = supabase.table("rays_vehicle_logs").select("total_trip_amount, trip_balance, advance") \
+
+    rays = supabase.table("rays_vehicle_logs").select("total_trip_amount, advance") \
         .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
-        
-    thoofan = supabase.table("thoofan_logs").select("total_trip_amount, trip_balance, advance") \
+
+    thoofan = supabase.table("thoofan_logs").select("total_trip_amount, advance") \
         .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
-        
-    other = supabase.table("other_vehicle_logs").select("total_trip_amount, trip_balance, advance") \
+
+    other = supabase.table("other_vehicle_logs").select("total_trip_amount, advance") \
         .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
 
     all_trips = (rays.data or []) + (thoofan.data or []) + (other.data or [])
 
     total_earnings = sum(float(t.get("total_trip_amount") or 0) for t in all_trips)
-    total_holding  = sum(float(t.get("trip_balance") or 0) for t in all_trips)
-    total_advance  = sum(float(t.get("advance") or 0) for t in all_trips) # 🌟 NEW: Sum up advances
+    total_advance  = sum(float(t.get("advance") or 0) for t in all_trips)
 
     return {
         "driver": driver,
         "total_earnings": total_earnings,
-        "total_holding": total_holding,
-        "total_advance": total_advance # 🌟 Return to frontend
+        "total_advance": total_advance
     }
