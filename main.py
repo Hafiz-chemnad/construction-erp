@@ -189,6 +189,7 @@ class VehicleLogBase(BaseModel):
     service_amount: float = 0
     byhand_balance: float = 0
     trip_balance: float = 0
+    advance: float = 0  # 🌟 ADD THIS LINE
     note: Optional[str] = None
 
 class ThoofanLogCreate(VehicleLogBase):
@@ -225,6 +226,7 @@ class VehicleLogUpdate(BaseModel):
     service_amount: Optional[float] = None
     byhand_balance: Optional[float] = None
     trip_balance: Optional[float] = None
+    advance: float = 0  # 🌟 ADD THIS LINE
     note: Optional[str] = None
 class RaysMachineLogCreate(BaseModel):
     vehicle_id:     int
@@ -636,7 +638,7 @@ UNIFIED_LOG_COLS = {
     "thoofan_giving_balance", "final_balance", "byhand_amount", "load_qty",
     "trip_rate", "trip_amount", "total_trip_amount", "diesel_amount", "km",
     "rto_amount", "parts_name", "parts_amount", "service_amount",
-    "byhand_balance", "trip_balance", "note"
+    "byhand_balance", "trip_balance","advance","note"
 }
 # ── THOOFAN LOGS ──────────────────────────────────────────────────
 
@@ -932,28 +934,25 @@ def check_driver_logs(driver: str = "", start_date: str = "2000-01-01", end_date
 def get_global_driver_trips(driver: str, start_date: str, end_date: str):
     search_term = f"%{driver}%"
     
-    # 1. Ask Rays Trucks (Removed 'advance')
-    rays = supabase.table("rays_vehicle_logs").select("total_trip_amount, trip_balance") \
+    # 🌟 Added "advance" back into these 3 queries
+    rays = supabase.table("rays_vehicle_logs").select("total_trip_amount, trip_balance, advance") \
         .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
         
-    # 2. Ask Thoofan Trucks (Removed 'advance')
-    thoofan = supabase.table("thoofan_logs").select("total_trip_amount, trip_balance") \
+    thoofan = supabase.table("thoofan_logs").select("total_trip_amount, trip_balance, advance") \
         .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
         
-    # 3. Ask Other Trucks (Removed 'advance')
-    other = supabase.table("other_vehicle_logs").select("total_trip_amount, trip_balance") \
+    other = supabase.table("other_vehicle_logs").select("total_trip_amount, trip_balance, advance") \
         .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
 
-    # Combine all trips from all tables
     all_trips = (rays.data or []) + (thoofan.data or []) + (other.data or [])
 
-    # Calculate the grand totals
     total_earnings = sum(float(t.get("total_trip_amount") or 0) for t in all_trips)
     total_holding  = sum(float(t.get("trip_balance") or 0) for t in all_trips)
+    total_advance  = sum(float(t.get("advance") or 0) for t in all_trips) # 🌟 NEW: Sum up advances
 
     return {
         "driver": driver,
         "total_earnings": total_earnings,
         "total_holding": total_holding,
-        "total_advance": 0 # Set to 0 since you will type it manually on the salary page
+        "total_advance": total_advance # 🌟 Return to frontend
     }
