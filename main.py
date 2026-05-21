@@ -887,49 +887,43 @@ def delete_vehicle_part(part_id: int):
 
 @app.get("/reports/check-logs")
 def check_driver_logs(driver: str = "", start_date: str = "2000-01-01", end_date: str = "2100-01-01"):
-    # 'ilike' for fuzzy match. Blank driver = totals for ALL drivers.
     search_term = f"%{driver}%"
 
-    # 1. Fetch Advances from Salary table
-    salary = supabase.table("driver_salary").select("advance") \
-        .ilike("driver_name", search_term) \
-        .gte("week_start", start_date).lte("week_start", end_date).execute()
+    rays = supabase.table("rays_vehicle_logs").select("thoofan_giving_balance, byhand_amount, final_balance, advance") \
+        .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
 
-    # 2. Fetch from Rays — thoofan_giving_balance, byhand_amount, final_balance
-    rays = supabase.table("rays_vehicle_logs").select("thoofan_giving_balance, byhand_amount, final_balance") \
-        .ilike("driver_name", search_term) \
-        .gte("date", start_date).lte("date", end_date).execute()
+    # 🌟 FIXED: Added "final_balance" and "thoofan_giving_balance" to the Thoofan search query
+    thoofan = supabase.table("thoofan_logs").select("thoofan_giving_balance, byhand_amount, final_balance, advance") \
+        .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
 
-    # 3. Fetch from Thoofan — byhand_amount only (thoofan_giving_balance excluded from totals)
-    thoofan = supabase.table("thoofan_logs").select("byhand_amount") \
-        .ilike("driver_name", search_term) \
-        .gte("date", start_date).lte("date", end_date).execute()
+    other = supabase.table("other_vehicle_logs").select("thoofan_giving_balance, byhand_amount, final_balance, advance") \
+        .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
 
-    # 4. Fetch from Other — thoofan_giving_balance, byhand_amount, final_balance
-    other = supabase.table("other_vehicle_logs").select("thoofan_giving_balance, byhand_amount, final_balance") \
-        .ilike("driver_name", search_term) \
-        .gte("date", start_date).lte("date", end_date).execute()
+    # 1. ADVANCE (Includes ALL Three)
+    total_advance = (
+        sum(float(r.get("advance") or 0) for r in rays.data or []) +
+        sum(float(r.get("advance") or 0) for r in thoofan.data or []) +
+        sum(float(r.get("advance") or 0) for r in other.data or [])
+    )
 
-    # Sum up advances
-    total_advance = sum(float(r.get("advance") or 0) for r in salary.data)
-
-    # Thoofan giving balance: Rays + Other only (exclude Thoofan's own thoofan_giving_balance)
+    # 2. THOOFAN GIVING AMOUNT (Only Rays + Other) - Excludes Thoofan's own logs
     total_thoofan_giving = (
-        sum(float(r.get("thoofan_giving_balance") or 0) for r in rays.data) +
-        sum(float(r.get("thoofan_giving_balance") or 0) for r in other.data)
+        sum(float(r.get("thoofan_giving_balance") or 0) for r in rays.data or []) +
+        sum(float(r.get("thoofan_giving_balance") or 0) for r in other.data or [])
     )
 
-    # By hand given: all three
+    # 3. BY HAND GIVEN (Includes ALL Three)
     total_byhand_given = (
-        sum(float(r.get("byhand_amount") or 0) for r in rays.data) +
-        sum(float(r.get("byhand_amount") or 0) for r in thoofan.data) +
-        sum(float(r.get("byhand_amount") or 0) for r in other.data)
+        sum(float(r.get("byhand_amount") or 0) for r in rays.data or []) +
+        sum(float(r.get("byhand_amount") or 0) for r in thoofan.data or []) +
+        sum(float(r.get("byhand_amount") or 0) for r in other.data or [])
     )
 
-    # Final balance: Rays + Other (thoofan doesn't have meaningful final_balance here)
+    # 🌟 FIXED: 4. FINAL BALANCE (Includes ALL Three)
     total_final_balance = (
-        sum(float(r.get("final_balance") or 0) for r in rays.data) +
-        sum(float(r.get("final_balance") or 0) for r in other.data)
+        sum(float(r.get("final_balance") or 0) for r in rays.data or []) +
+        sum(float(r.get("final_balance") or 0) for r in thoofan.data or []) +
+        sum(float(r.get("final_balance") or 0) for r in other.data or [])
     )
 
     return {
