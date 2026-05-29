@@ -938,20 +938,20 @@ def check_driver_logs(driver: str = "", start_date: str = "2000-01-01", end_date
 def get_global_driver_trips(driver: str, start_date: str, end_date: str):
     search_term = f"%{driver}%"
 
-    rays = supabase.table("rays_vehicle_logs").select("total_trip_amount, advance, byhand_amount") \
+    rays = supabase.table("rays_vehicle_logs").select("total_trip_amount, advance, byhand_balance") \
         .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
 
-    thoofan = supabase.table("thoofan_logs").select("total_trip_amount, advance, byhand_amount") \
+    thoofan = supabase.table("thoofan_logs").select("total_trip_amount, advance, byhand_balance") \
         .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
 
-    other = supabase.table("other_vehicle_logs").select("total_trip_amount, advance, byhand_amount") \
+    other = supabase.table("other_vehicle_logs").select("total_trip_amount, advance, byhand_balance") \
         .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
 
     all_trips = (rays.data or []) + (thoofan.data or []) + (other.data or [])
 
     total_earnings    = sum(float(t.get("total_trip_amount") or 0) for t in all_trips)
     total_advance     = sum(float(t.get("advance") or 0) for t in all_trips)
-    total_byhand      = sum(float(t.get("byhand_amount") or 0) for t in all_trips)
+    total_byhand      = sum(float(t.get("byhand_balance") or 0) for t in all_trips)
 
     return {
         "driver": driver,
