@@ -959,3 +959,195 @@ def get_global_driver_trips(driver: str, start_date: str, end_date: str):
         "total_advance": total_advance,
         "total_byhand": total_byhand
     }
+
+    # ═══════════════════════════════════════════════════════════════════
+#  BANKING & ACCOUNTING MODULE (FULL BACKEND)
+# ═══════════════════════════════════════════════════════════════════
+
+# ── 1. MODELS ──
+class AccountCreate(BaseModel):
+    name: str
+    category: str  # 'BANK', 'TREASURY', 'TAX', 'LOAN'
+    sub_type: str  # 'CURRENT', 'OD', 'GOLD_LOAN', 'FD', 'GST_CASH', 'GST_CREDIT', 'TDS'
+    account_number: Optional[str] = None
+
+class DailyBalanceCreate(BaseModel):
+    account_name: str
+    date: str
+    balance: float
+    note: Optional[str] = None
+
+class DailyBalanceUpdate(BaseModel):
+    balance: Optional[float] = None
+    note: Optional[str] = None
+
+class ODLogCreate(BaseModel):
+    account_name: str
+    date: str
+    balance_amount: float = 0
+    interest_amount: float = 0
+    note: Optional[str] = None
+
+class GoldLoanCreate(BaseModel):
+    account_name: str
+    opening_date: str
+    closing_date: Optional[str] = None
+    amount: float
+    interest_amount: float = 0
+    is_renewal: bool = False
+
+class PurchaseBillCreate(BaseModel):
+    work_id: int
+    date: str
+    purchase_amount: float = 0
+    tax_amount: float = 0
+    is_split_50_50: bool = False
+    tds_deducted: float = 0
+    sidko_charges: float = 0
+    other_charges: float = 0
+    note: Optional[str] = None
+
+# ── 2. HELPER TO GET ACCOUNT ID BY NAME ──
+def get_account_id(name: str):
+    res = supabase.table("accounts").select("id").eq("name", name).single().execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail=f"Account '{name}' not found")
+    return res.data["id"]
+
+# ── 3. ACCOUNTS ENDPOINTS (Dynamic Creation) ──
+@app.post("/banking/accounts")
+def create_account(data: AccountCreate):
+    try:
+        return supabase.table("accounts").insert(data.dict()).execute().data
+    except Exception as e:
+        # Catch duplicate name errors cleanly
+        raise HTTPException(status_code=400, detail="An account with this name already exists or data is invalid.")
+
+@app.get("/banking/accounts")
+def get_accounts():
+    return supabase.table("accounts").select("*").eq("is_active", True).order("created_at").execute().data
+
+# ── 4. DAILY BALANCE ENDPOINTS (The Passbook) ──
+@app.post("/banking/daily-balance")
+def save_daily_balance(data: DailyBalanceCreate):
+    acc_id = get_account_id(data.account_name)
+    
+    # Check if a balance for this exact day already exists
+    existing = supabase.table("daily_balances").select("id").eq("account_id", acc_id).eq("date", data.date).execute()
+    
+    payload = {
+        "account_id": acc_id,
+        "date": data.date,
+        "balance": data.balance,
+        "note": data.note
+    }
+
+    if existing.data:
+        # Update existing record
+        return supabase.table("daily_balances").update(payload).eq("id", existing.data[0]["id"]).execute().data
+    else:
+        # Insert new record
+        return supabase.table("daily_balances").insert(payload).execute().data
+
+@app.get("/banking/opening-balance")
+def get_opening_balance(account_name: str, target_date: str):
+    """
+    Magic Route: Finds the most recent closing balance BEFORE the selected date.
+    """
+    acc_id = get_account_id(account_name)
+    
+    # 1. Get the latest entry strictly BEFORE the target date (This is the Opening Balance)
+    res = supabase.table("daily_balances") \
+        .select("balance") \
+        .eq("account_id", acc_id) \
+        .lt("date", target_date) \
+        .order("date", desc=True) \
+        .limit(1) \
+        .execute()
+        
+    opening_balance = float(res.data[0]["balance"]) if res.data else 0.0
+    
+    # 2. Check if they ALREADY typed a closing balance for the target_date itself
+    today_res = supabase.table("daily_balances") \
+        .select("balance") \
+        .eq("account_id", acc_id) \
+        .eq("date", target_date) \
+        .execute()
+        
+    today_balance = float(today_res.data[0]["balance"]) if today_res.data else None
+    
+    return {
+        "opening_balance": opening_balance,
+        "saved_closing_balance": today_balance
+    }
+
+# ── 5. HISTORY, EDIT & DELETE (For Passbook) ──
+@app.get("/banking/daily-balances/{account_name}")
+def get_daily_balances_history(account_name: str):
+    """Fetches the full passbook history for a specific account so the user can see past logs."""
+    acc_id = get_account_id(account_name)
+    return supabase.table("daily_balances") \
+        .select("*") \
+        .eq("account_id", acc_id) \
+        .order("date", desc=True) \
+        .execute().data
+
+@app.patch("/banking/daily-balance/{log_id}")
+def update_daily_balance(log_id: int, data: DailyBalanceUpdate):
+    """Allows editing a specific log entry by its ID."""
+    upd = {k: v for k, v in data.dict().items() if v is not None}
+    if not upd:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    return supabase.table("daily_balances").update(upd).eq("id", log_id).execute().data
+
+@app.delete("/banking/daily-balance/{log_id}")
+def delete_daily_balance(log_id: int):
+    """Deletes a specific passbook entry by its ID."""
+    supabase.table("daily_balances").delete().eq("id", log_id).execute()
+    return {"deleted": True}
+
+# ── 6. LOAN ENDPOINTS (OD & Gold Loan) ──
+@app.post("/banking/od-logs")
+def add_od_log(data: ODLogCreate):
+    acc_id = get_account_id(data.account_name)
+    payload = data.dict()
+    payload.pop("account_name")
+    payload["account_id"] = acc_id
+    return supabase.table("od_logs").insert(payload).execute().data
+
+@app.post("/banking/gold-loans")
+def add_gold_loan(data: GoldLoanCreate):
+    acc_id = get_account_id(data.account_name)
+    payload = data.dict()
+    payload.pop("account_name")
+    payload["account_id"] = acc_id
+    return supabase.table("gold_loans").insert(payload).execute().data
+
+# ── 7. TDS & PURCHASE BILLS ──
+@app.post("/banking/purchase-bills")
+def add_purchase_bill(data: PurchaseBillCreate):
+    return supabase.table("purchase_bills").insert(data.dict()).execute().data
+
+@app.get("/banking/purchase-bills")
+def get_purchase_bills():
+    # Joins with works table to get the project name
+    return supabase.table("purchase_bills").select("*, works(name, panchayaths(name))").order("date", desc=True).execute().data
+
+# ── 8. FD TOTALS (Linked to Agreements) ──
+@app.get("/banking/fd-totals")
+def get_fd_totals():
+    """Calculates the total locked amount in Bank FDs vs Treasury FDs."""
+    agreements = supabase.table("agreements").select("security_amount, security_deposit_type").execute()
+    
+    bank_fd = 0
+    treasury_fd = 0
+    
+    for a in (agreements.data or []):
+        amt = float(a.get("security_amount") or 0)
+        dep_type = a.get("security_deposit_type")
+        if dep_type == "Bank FD":
+            bank_fd += amt
+        elif dep_type == "Treasury FD":
+            treasury_fd += amt
+            
+    return {"Bank FD": bank_fd, "Treasury FD": treasury_fd}
