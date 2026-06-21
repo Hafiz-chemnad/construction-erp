@@ -1153,3 +1153,12 @@ def get_fd_totals():
             treasury_fd += amt
             
     return {"Bank FD": bank_fd, "Treasury FD": treasury_fd}
+@app.get("/banking/od-logs/{account_name}")
+def get_od_logs(account_name: str):
+    acc_id = get_account_id(account_name)
+    return supabase.table("od_logs").select("*").eq("account_id", acc_id).order("date", desc=True).execute().data
+
+@app.get("/banking/gold-loans/{account_name}")
+def get_gold_loans(account_name: str):
+    acc_id = get_account_id(account_name)
+    return supabase.table("gold_loans").select("*").eq("account_id", acc_id).order("opening_date", desc=True).execute().data    
