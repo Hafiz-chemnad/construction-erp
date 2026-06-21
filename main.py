@@ -1039,6 +1039,15 @@ class GoldLoanUpdate(BaseModel):
     is_renewal: Optional[bool] = None
     status: Optional[str] = None
 
+class PurchaseBillUpdate(BaseModel):
+    date: Optional[str] = None
+    purchase_amount: Optional[float] = None
+    tax_amount: Optional[float] = None
+    is_split_50_50: Optional[bool] = None
+    tds_deducted: Optional[float] = None
+    sidko_charges: Optional[float] = None
+    other_charges: Optional[float] = None
+    note: Optional[str] = None
 # ── 2. HELPER TO GET ACCOUNT ID BY NAME ──
 def get_account_id(name: str):
     res = supabase.table("accounts").select("id").eq("name", name).single().execute()
@@ -1122,6 +1131,7 @@ def get_daily_balances_history(account_name: str):
         .select("*") \
         .eq("account_id", acc_id) \
         .order("date", desc=True) \
+        .order("id", desc=True) \
         .execute().data
 
 @app.patch("/banking/daily-balance/{log_id}")
@@ -1150,7 +1160,12 @@ def add_od_log(data: ODLogCreate):
 @app.get("/banking/gold-loans/{account_name}")
 def get_gold_loans(account_name: str):
     acc_id = get_account_id(account_name)
-    return supabase.table("gold_loans").select("*").eq("account_id", acc_id).order("created_at", desc=True).execute().data
+    return supabase.table("gold_loans") \
+        .select("*") \
+        .eq("account_id", acc_id) \
+        .order("created_at", desc=True) \
+        .order("id", desc=True) \
+        .execute().data
 
 @app.post("/banking/gold-loans")
 def add_gold_loan(data: GoldLoanCreate):
@@ -1174,8 +1189,21 @@ def add_purchase_bill(data: PurchaseBillCreate):
 @app.get("/banking/purchase-bills")
 def get_purchase_bills():
     # Joins with works table to get the project name
-    return supabase.table("purchase_bills").select("*, works(name, panchayaths(name))").order("date", desc=True).execute().data
+    return supabase.table("purchase_bills") \
+        .select("*, works(name, panchayaths(name))") \
+        .order("date", desc=True) \
+        .order("id", desc=True) \
+        .execute().data
 
+@app.patch("/banking/purchase-bills/{bill_id}")
+def update_purchase_bill(bill_id: int, data: PurchaseBillUpdate):
+    upd = {k: v for k, v in data.dict().items() if v is not None}
+    return supabase.table("purchase_bills").update(upd).eq("id", bill_id).execute().data
+
+@app.delete("/banking/purchase-bills/{bill_id}")
+def delete_purchase_bill(bill_id: int):
+    supabase.table("purchase_bills").delete().eq("id", bill_id).execute()
+    return {"deleted": True}
 # ── 8. FD TOTALS (Linked to Agreements) ──
 @app.get("/banking/fd-totals")
 def get_fd_totals():
@@ -1197,7 +1225,12 @@ def get_fd_totals():
 @app.get("/banking/od-logs/{account_name}")
 def get_od_logs(account_name: str):
     acc_id = get_account_id(account_name)
-    return supabase.table("od_logs").select("*").eq("account_id", acc_id).order("date", desc=True).execute().data
+    return supabase.table("od_logs") \
+        .select("*") \
+        .eq("account_id", acc_id) \
+        .order("date", desc=True) \
+        .order("id", desc=True) \
+        .execute().data
 # 🌟 MISSING ROUTES FOR EDITING AND DELETING
 @app.patch("/banking/od-logs/{log_id}")
 def update_od_log(log_id: int, data: ODLogUpdate):
