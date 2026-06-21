@@ -1016,6 +1016,29 @@ class PurchaseBillCreate(BaseModel):
     other_charges: float = 0
     note: Optional[str] = None
 
+class ODLogCreate(BaseModel):
+    account_name: str
+    date: str
+    balance_amount: float = 0
+    interest_amount: float = 0
+    note: Optional[str] = None
+
+# 🌟 ADDED OD UPDATE CLASS
+class ODLogUpdate(BaseModel):
+    date: Optional[str] = None
+    balance_amount: Optional[float] = None
+    interest_amount: Optional[float] = None
+    note: Optional[str] = None
+
+# 🌟 EXPANDED GOLD LOAN UPDATE CLASS
+class GoldLoanUpdate(BaseModel):
+    opening_date: Optional[str] = None
+    closing_date: Optional[str] = None
+    amount: Optional[float] = None
+    interest_amount: Optional[float] = None
+    is_renewal: Optional[bool] = None
+    status: Optional[str] = None
+
 # ── 2. HELPER TO GET ACCOUNT ID BY NAME ──
 def get_account_id(name: str):
     res = supabase.table("accounts").select("id").eq("name", name).single().execute()
@@ -1175,3 +1198,18 @@ def get_fd_totals():
 def get_od_logs(account_name: str):
     acc_id = get_account_id(account_name)
     return supabase.table("od_logs").select("*").eq("account_id", acc_id).order("date", desc=True).execute().data
+# 🌟 MISSING ROUTES FOR EDITING AND DELETING
+@app.patch("/banking/od-logs/{log_id}")
+def update_od_log(log_id: int, data: ODLogUpdate):
+    upd = {k: v for k, v in data.dict().items() if v is not None}
+    return supabase.table("od_logs").update(upd).eq("id", log_id).execute().data
+
+@app.delete("/banking/od-logs/{log_id}")
+def delete_od_log(log_id: int):
+    supabase.table("od_logs").delete().eq("id", log_id).execute()
+    return {"deleted": True}
+
+@app.delete("/banking/gold-loans/{loan_id}")
+def delete_gold_loan(loan_id: int):
+    supabase.table("gold_loans").delete().eq("id", loan_id).execute()
+    return {"deleted": True}
