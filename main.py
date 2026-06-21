@@ -53,6 +53,7 @@ class AgreementCreate(BaseModel):
     supervision_cert_received: bool
     stamp_amount: float
     security_amount: float
+    security_deposit_type: str = "Treasury FD"
     security_period: int
     security_closing_date: Optional[str] = None
     insurance_amount: float
@@ -68,6 +69,7 @@ class AgreementUpdate(BaseModel):
     supervision_cert_received: Optional[bool] = None
     stamp_amount: Optional[float] = None
     security_amount: Optional[float] = None
+    security_deposit_type: Optional[str] = None
     security_period: Optional[int] = None
     security_closing_date: Optional[str] = None
     insurance_amount: Optional[float] = None
