@@ -998,6 +998,13 @@ class GoldLoanCreate(BaseModel):
     interest_amount: float = 0
     is_renewal: bool = False
 
+# 🌟 ADD THIS NEW CLASS
+class GoldLoanUpdate(BaseModel):
+    closing_date: Optional[str] = None
+    interest_amount: Optional[float] = None
+    is_renewal: Optional[bool] = None
+    status: Optional[str] = None
+
 class PurchaseBillCreate(BaseModel):
     work_id: int
     date: str
@@ -1117,6 +1124,11 @@ def add_od_log(data: ODLogCreate):
     payload["account_id"] = acc_id
     return supabase.table("od_logs").insert(payload).execute().data
 
+@app.get("/banking/gold-loans/{account_name}")
+def get_gold_loans(account_name: str):
+    acc_id = get_account_id(account_name)
+    return supabase.table("gold_loans").select("*").eq("account_id", acc_id).order("created_at", desc=True).execute().data
+
 @app.post("/banking/gold-loans")
 def add_gold_loan(data: GoldLoanCreate):
     acc_id = get_account_id(data.account_name)
@@ -1124,6 +1136,12 @@ def add_gold_loan(data: GoldLoanCreate):
     payload.pop("account_name")
     payload["account_id"] = acc_id
     return supabase.table("gold_loans").insert(payload).execute().data
+
+# 🌟 ADD THIS NEW ROUTE (Allows us to close/renew existing loans)
+@app.patch("/banking/gold-loans/{loan_id}")
+def update_gold_loan(loan_id: int, data: GoldLoanUpdate):
+    upd = {k: v for k, v in data.dict().items() if v is not None}
+    return supabase.table("gold_loans").update(upd).eq("id", loan_id).execute().data
 
 # ── 7. TDS & PURCHASE BILLS ──
 @app.post("/banking/purchase-bills")
@@ -1157,8 +1175,3 @@ def get_fd_totals():
 def get_od_logs(account_name: str):
     acc_id = get_account_id(account_name)
     return supabase.table("od_logs").select("*").eq("account_id", acc_id).order("date", desc=True).execute().data
-
-@app.get("/banking/gold-loans/{account_name}")
-def get_gold_loans(account_name: str):
-    acc_id = get_account_id(account_name)
-    return supabase.table("gold_loans").select("*").eq("account_id", acc_id).order("opening_date", desc=True).execute().data    
