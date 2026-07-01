@@ -76,28 +76,38 @@ class AgreementUpdate(BaseModel):
     site_number: Optional[str] = None
     site_handover_date: Optional[str] = None
 
-class Labourer(BaseModel):
-    work_id: int
+class GlobalLabourerCreate(BaseModel):
     name: str
-    wage_type_1: float
-    wage_type_2: float
+    phone: Optional[str] = None
+    wage_tar: float = 0
+    wage_concrete: float = 0
+    wage_local: float = 0
+    worker_type: str = "CORE"   # 'CORE' | 'TEMP'
 
-class LabourerUpdate(BaseModel):
+class GlobalLabourerUpdate(BaseModel):
     name: Optional[str] = None
-    wage_type_1: Optional[float] = None
-    wage_type_2: Optional[float] = None
+    phone: Optional[str] = None
+    wage_tar: Optional[float] = None
+    wage_concrete: Optional[float] = None
+    wage_local: Optional[float] = None
+    worker_type: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class SiteRosterAdd(BaseModel):
+    work_id: int
+    global_labourer_id: int
 
 class AttendanceLog(BaseModel):
     work_id: int
-    labourer_id: int
+    global_labourer_id: int
     date: str
-    present: bool
-    wage_used: float
+    work_type: str          # 'TAR' | 'CONCRETE' | 'LOCAL'
+    shift_fraction: float = 1.0   # 0.25 / 0.5 / 0.75 / 1.0
 
 class LabourCash(BaseModel):
-    work_id: int
-    labourer_id: int
-    type: str
+    work_id: Optional[int] = None
+    global_labourer_id: int
+    type: str                # 'ADVANCE' | 'SETTLEMENT'
     amount: float
     date: str
     note: Optional[str] = None
@@ -298,7 +308,10 @@ class VehiclePartCreate(BaseModel):
 def recalculate_balance(work_id: int):
     """
     Recompute current_amount from scratch.
-    current_amount = deal_amount - SUM(materials) - SUM(diesel) - SUM(labour_cash)
+    current_amount = deal_amount - SUM(materials) - SUM(diesel)
+                      - SUM(attendance.wage_earned) - SUM(labour_cash where work_id set)
+    NOTE: labour_cash.work_id is nullable now (advances not always tied to a site's
+    petty cash), so only rows WITH a work_id are deducted from that site's balance.
     """
     work = supabase.table("works").select("deal_amount").eq("id", work_id).single().execute()
     deal = float(work.data["deal_amount"])
@@ -306,12 +319,14 @@ def recalculate_balance(work_id: int):
     mat_res = supabase.table("materials").select("amount").eq("work_id", work_id).execute()
     dsl_res = supabase.table("diesel").select("amount").eq("work_id", work_id).execute()
     csh_res = supabase.table("labour_cash").select("amount").eq("work_id", work_id).execute()
+    att_res = supabase.table("attendance").select("wage_earned").eq("work_id", work_id).execute()
 
     mat_total = sum(float(r["amount"]) for r in (mat_res.data or []))
     dsl_total = sum(float(r["amount"]) for r in (dsl_res.data or []))
     csh_total = sum(float(r["amount"]) for r in (csh_res.data or []))
+    wage_total = sum(float(r["wage_earned"] or 0) for r in (att_res.data or []))
 
-    new_balance = deal - mat_total - dsl_total - csh_total
+    new_balance = deal - mat_total - dsl_total - csh_total - wage_total
 
     supabase.table("works").update({
         "current_amount": new_balance,
@@ -471,85 +486,153 @@ def delete_diesel(diesel_id: int):
 
 # ── LABOURERS ─────────────────────────────────────────────────────────────────
 
-@app.get("/labourers/{work_id}")
-def get_labourers(work_id: int):
-    return supabase.table("labourers").select("*").eq("work_id", work_id).order("name").execute().data
+WAGE_FIELD_BY_TYPE = {
+    "TAR": "wage_tar",
+    "CONCRETE": "wage_concrete",
+    "LOCAL": "wage_local",
+}
+VALID_SHIFT_FRACTIONS = {0.25, 0.5, 0.75, 1.0}
 
-@app.post("/labourers")
-def add_labourer(item: Labourer):
-    # labourers table has: work_id, name, daily_wage
-    # Map wage_type_1 → daily_wage
-    data = {
-        "work_id": item.work_id,
-        "name": item.name,
-        "daily_wage": item.wage_type_1,
-    }
-    return supabase.table("labourers").insert(data).execute().data
+# ── GLOBAL LABOURERS (Master Worker Pool) ───────────────────────────────────
 
-@app.patch("/labourers/{labourer_id}")
-def update_labourer(labourer_id: int, data: LabourerUpdate):
-    update_data = {}
-    if data.name is not None:
-        update_data["name"] = data.name
-    if data.wage_type_1 is not None:
-        update_data["daily_wage"] = data.wage_type_1
+@app.get("/global-labourers")
+def get_global_labourers(active_only: bool = True):
+    q = supabase.table("global_labourers").select("*").order("name")
+    if active_only:
+        q = q.eq("is_active", True)
+    return q.execute().data
+
+@app.post("/global-labourers")
+def add_global_labourer(item: GlobalLabourerCreate):
+    if item.worker_type not in ("CORE", "TEMP"):
+        raise HTTPException(status_code=400, detail="worker_type must be CORE or TEMP")
+    return supabase.table("global_labourers").insert(item.dict()).execute().data
+
+@app.patch("/global-labourers/{labourer_id}")
+def update_global_labourer(labourer_id: int, data: GlobalLabourerUpdate):
+    update_data = {k: v for k, v in data.dict().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
-    return supabase.table("labourers").update(update_data).eq("id", labourer_id).execute().data
+    return supabase.table("global_labourers").update(update_data).eq("id", labourer_id).execute().data
 
-@app.delete("/labourers/{labourer_id}")
-def delete_labourer(labourer_id: int):
-    supabase.table("attendance").delete().eq("labourer_id", labourer_id).execute()
-    supabase.table("labour_cash").delete().eq("labourer_id", labourer_id).execute()
-    supabase.table("labourers").delete().eq("id", labourer_id).execute()
+@app.delete("/global-labourers/{labourer_id}")
+def deactivate_global_labourer(labourer_id: int):
+    # Soft-delete only: a worker may have historical attendance/cash records
+    # tied across many sites, so we never hard-delete them.
+    supabase.table("global_labourers").update({"is_active": False}).eq("id", labourer_id).execute()
+    return {"deactivated": True}
+
+@app.get("/global-labourers/{labourer_id}/ledger")
+def get_global_labourer_ledger(labourer_id: int):
+    """Full passbook: every attendance entry + every cash entry, plus net balance."""
+    att = supabase.table("attendance").select("*, works(name)").eq("global_labourer_id", labourer_id).order("date", desc=True).execute().data or []
+    cash = supabase.table("labour_cash").select("*, works(name)").eq("global_labourer_id", labourer_id).order("date", desc=True).execute().data or []
+
+    total_earned = sum(float(a["wage_earned"] or 0) for a in att)
+    total_advance = sum(float(c["amount"]) for c in cash if c["type"] == "ADVANCE")
+    total_settlement = sum(float(c["amount"]) for c in cash if c["type"] == "SETTLEMENT")
+    net_pending = total_earned - total_advance - total_settlement
+
+    return {
+        "attendance": att,
+        "cash": cash,
+        "total_earned": total_earned,
+        "total_advance": total_advance,
+        "total_settlement": total_settlement,
+        "net_pending": net_pending,
+    }
+
+# ── SITE ROSTER ──────────────────────────────────────────────────────────────
+
+@app.get("/site-roster/{work_id}")
+def get_site_roster(work_id: int):
+    # Joins roster rows with the global labourer details for display
+    return supabase.table("site_roster") \
+        .select("*, global_labourers(*)") \
+        .eq("work_id", work_id) \
+        .execute().data or []
+
+@app.post("/site-roster")
+def add_to_roster(item: SiteRosterAdd):
+    existing = supabase.table("site_roster") \
+        .select("id") \
+        .eq("work_id", item.work_id) \
+        .eq("global_labourer_id", item.global_labourer_id) \
+        .execute()
+    if existing.data:
+        return existing.data  # already on roster, no-op
+    return supabase.table("site_roster").insert(item.dict()).execute().data
+
+@app.delete("/site-roster/{roster_id}")
+def remove_from_roster(roster_id: int):
+    # Removing from roster does NOT delete attendance/cash history
+    supabase.table("site_roster").delete().eq("id", roster_id).execute()
     return {"deleted": True}
 
-# ── ATTENDANCE ────────────────────────────────────────────────────────────────
-
-# Columns that exist in the 'attendance' table (from DB schema screenshot):
-# id, labourer_id, work_id, date, present, created_at
-# 'wage_used' does NOT exist in the table — it is stored in labourers.daily_wage
-# FIX: Strip wage_used from attendance inserts. It is only used client-side for display.
-ATTENDANCE_TABLE_COLUMNS = {"work_id", "labourer_id", "date", "present"}
+# ── ATTENDANCE (Fractional Timesheet) ───────────────────────────────────────
 
 @app.get("/attendance/{work_id}")
 def get_attendance(work_id: int):
     try:
-        return supabase.table("attendance").select("*").eq("work_id", work_id).execute().data or []
+        return supabase.table("attendance") \
+            .select("*, global_labourers(name)") \
+            .eq("work_id", work_id) \
+            .order("date", desc=True) \
+            .execute().data or []
     except Exception as e:
         print(f"Error fetching attendance: {e}")
         return []
 
 @app.post("/attendance")
 def mark_attendance(item: AttendanceLog):
-    # FIX: Only send columns that exist in the attendance table.
-    # 'wage_used' caused the 500 → which browser showed as a CORS error.
-    insert_data = {k: v for k, v in item.dict().items() if k in ATTENDANCE_TABLE_COLUMNS}
+    work_type = item.work_type.upper()
+    if work_type not in WAGE_FIELD_BY_TYPE:
+        raise HTTPException(status_code=400, detail="work_type must be TAR, CONCRETE or LOCAL")
+    if item.shift_fraction not in VALID_SHIFT_FRACTIONS:
+        raise HTTPException(status_code=400, detail="shift_fraction must be 0.25, 0.5, 0.75 or 1.0")
 
-    existing = supabase.table("attendance") \
-        .select("id") \
-        .eq("labourer_id", item.labourer_id) \
-        .eq("date", item.date) \
-        .execute()
+    # Look up the worker's rate for this work_type and snapshot the earned wage
+    worker = supabase.table("global_labourers").select("*").eq("id", item.global_labourer_id).single().execute()
+    if not worker.data:
+        raise HTTPException(status_code=404, detail="Worker not found")
 
-    if existing.data:
-        return supabase.table("attendance") \
-            .update({"present": item.present}) \
-            .eq("id", existing.data[0]["id"]).execute().data
+    wage_field = WAGE_FIELD_BY_TYPE[work_type]
+    day_rate = float(worker.data.get(wage_field) or 0)
+    wage_earned = round(day_rate * item.shift_fraction, 2)
 
-    return supabase.table("attendance").insert(insert_data).execute().data
+    insert_data = {
+        "work_id": item.work_id,
+        "global_labourer_id": item.global_labourer_id,
+        "date": item.date,
+        "work_type": work_type,
+        "shift_fraction": item.shift_fraction,
+        "wage_earned": wage_earned,
+    }
+    # NOTE: no unique(labourer, date) check — a worker can have multiple
+    # shift entries across different sites (or work types) on the same day.
+    res = supabase.table("attendance").insert(insert_data).execute()
+    new_bal = recalculate_balance(item.work_id)
+    return {"attendance": res.data, "current_balance": new_bal}
 
 @app.delete("/attendance/{attendance_id}")
 def delete_attendance(attendance_id: int):
+    att = supabase.table("attendance").select("work_id").eq("id", attendance_id).single().execute()
+    work_id = att.data["work_id"] if att.data else None
     supabase.table("attendance").delete().eq("id", attendance_id).execute()
+    if work_id:
+        recalculate_balance(work_id)
     return {"deleted": True}
 
-# ── LABOUR CASH ───────────────────────────────────────────────────────────────
+# ── LABOUR CASH (Advances & Settlements) ────────────────────────────────────
 
 @app.get("/labour-cash/{work_id}")
 def get_labour_cash_history(work_id: int):
     try:
-        return supabase.table("labour_cash").select("*").eq("work_id", work_id).order("date", desc=True).execute().data or []
+        return supabase.table("labour_cash") \
+            .select("*, global_labourers(name)") \
+            .eq("work_id", work_id) \
+            .order("date", desc=True) \
+            .execute().data or []
     except Exception as e:
         print(f"Error fetching cash: {e}")
         return []
@@ -558,10 +641,15 @@ def get_labour_cash_history(work_id: int):
 def add_labour_cash(item: LabourCash):
     if item.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
-    # Strip None values before insert
+    if item.type not in ("ADVANCE", "SETTLEMENT"):
+        raise HTTPException(status_code=400, detail="type must be ADVANCE or SETTLEMENT")
+
     data = {k: v for k, v in item.dict().items() if v is not None}
     supabase.table("labour_cash").insert(data).execute()
-    new_bal = recalculate_balance(item.work_id)
+
+    new_bal = None
+    if item.work_id:
+        new_bal = recalculate_balance(item.work_id)
     return {"message": "Cash logged", "current_balance": new_bal}
 
 @app.patch("/labour-cash/{cash_id}")
@@ -569,14 +657,14 @@ def update_labour_cash(cash_id: int, data: LabourCashUpdate):
     update_data = {k: v for k, v in data.dict().items() if v is not None}
     res = supabase.table("labour_cash").update(update_data).eq("id", cash_id).execute()
     csh = supabase.table("labour_cash").select("work_id").eq("id", cash_id).single().execute()
-    if csh.data:
+    if csh.data and csh.data.get("work_id"):
         recalculate_balance(csh.data["work_id"])
     return res.data
 
 @app.delete("/labour-cash/{cash_id}")
 def delete_labour_cash(cash_id: int):
     csh = supabase.table("labour_cash").select("work_id").eq("id", cash_id).single().execute()
-    work_id = csh.data["work_id"] if csh.data else None
+    work_id = csh.data.get("work_id") if csh.data else None
     supabase.table("labour_cash").delete().eq("id", cash_id).execute()
     if work_id:
         recalculate_balance(work_id)
