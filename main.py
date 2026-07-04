@@ -54,6 +54,8 @@ class AgreementCreate(BaseModel):
     stamp_amount: float
     security_amount: float
     security_deposit_type: str = "Treasury FD"
+    treasury_fd_amount: float = 0        # ADD
+    bank_fd_amount: float = 0            # ADD
     security_period: int
     security_closing_date: Optional[str] = None
     insurance_amount: float
