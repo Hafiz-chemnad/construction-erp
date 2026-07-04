@@ -70,6 +70,8 @@ class AgreementUpdate(BaseModel):
     stamp_amount: Optional[float] = None
     security_amount: Optional[float] = None
     security_deposit_type: Optional[str] = None
+    treasury_fd_amount: float = 0      # ADD
+    bank_fd_amount: float = 0
     security_period: Optional[int] = None
     security_closing_date: Optional[str] = None
     insurance_amount: Optional[float] = None
@@ -1296,19 +1298,15 @@ def delete_purchase_bill(bill_id: int):
 @app.get("/banking/fd-totals")
 def get_fd_totals():
     """Calculates the total locked amount in Bank FDs vs Treasury FDs."""
-    agreements = supabase.table("agreements").select("security_amount, security_deposit_type").execute()
-    
+    agreements = supabase.table("agreements").select("treasury_fd_amount, bank_fd_amount").execute()
+
     bank_fd = 0
     treasury_fd = 0
-    
+
     for a in (agreements.data or []):
-        amt = float(a.get("security_amount") or 0)
-        dep_type = a.get("security_deposit_type")
-        if dep_type == "Bank FD":
-            bank_fd += amt
-        elif dep_type == "Treasury FD":
-            treasury_fd += amt
-            
+        bank_fd     += float(a.get("bank_fd_amount") or 0)
+        treasury_fd += float(a.get("treasury_fd_amount") or 0)
+
     return {"Bank FD": bank_fd, "Treasury FD": treasury_fd}
 @app.get("/banking/od-logs/{account_name}")
 def get_od_logs(account_name: str):
