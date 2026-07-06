@@ -255,6 +255,18 @@ class RaysMachineLogCreate(BaseModel):
     service_amount: float           = 0
     note:           Optional[str]   = None
 
+# FIX: Rays machine logs had no update/edit capability, unlike Thoofan's
+# equivalent. Added to match ThoofanMachineLogUpdate.
+class RaysMachineLogUpdate(BaseModel):
+    date:           Optional[str]   = None
+    hours:          Optional[float] = None
+    rate:           Optional[float] = None
+    site:           Optional[str]   = None
+    parts_name:     Optional[str]   = None
+    parts_amount:   Optional[float] = None
+    service_amount: Optional[float] = None
+    note:           Optional[str]   = None
+
 class ThoofanMachineLogCreate(BaseModel):
     vehicle_id:     int
     date:           str
@@ -443,11 +455,12 @@ def delete_material(material_id: int):
 
 # ── DIESEL ────────────────────────────────────────────────────────────────────
 
-# Columns that actually exist in the 'diesel' table (from DB schema screenshot):
-# id, work_id, vehicle_name, amount, date, note, created_at
-# The 'litres' column does NOT exist — it only exists in 'diesel_expenses'.
-# FIX: Always exclude 'litres' from inserts/updates to the 'diesel' table.
-DIESEL_TABLE_COLUMNS = {"work_id", "vehicle_name", "amount", "date", "note"}
+# Columns that exist in the 'diesel' table:
+# id, work_id, vehicle_name, amount, litres, date, note, created_at
+# FIX: 'litres' column was added via migration (see add_litres_to_diesel.sql) —
+# it is now a real column, so it must be included here or every litres value
+# typed in the UI gets silently dropped before insert/update.
+DIESEL_TABLE_COLUMNS = {"work_id", "vehicle_name", "amount", "litres", "date", "note"}
 
 @app.get("/diesel/{work_id}")
 def get_diesel_by_work(work_id: int):
@@ -887,6 +900,15 @@ def delete_rays_machine_log(log_id: int):
     supabase.table("rays_machine_logs").delete().eq("id", log_id).execute()
     return {"deleted": True}
 
+# FIX: Rays machine logs previously had no edit/update route — only Thoofan's
+# equivalent did. Added to match update_thoofan_machine_log exactly.
+@app.patch("/rays/machine-logs/{log_id}")
+def update_rays_machine_log(log_id: int, data: RaysMachineLogUpdate):
+    upd = {k: v for k, v in data.dict().items() if v is not None}
+    if not upd:
+        return {"message": "Nothing to update"}
+    return supabase.table("rays_machine_logs").update(upd).eq("id", log_id).execute().data
+
 
 # ── DRIVER SALARY ─────────────────────────────────────────────────
 
@@ -909,8 +931,11 @@ def get_driver_salary(vehicle_id: int):
 @app.post("/driver-salary")
 def add_driver_salary(item: DriverSalaryCreate):
     # Auto-calculate salary_balance server-side
+    # FIX: must match the UI formula exactly —
+    # Final Salary = (Trip Balance) - (Advance + ByHand Balance)
+    # (previously this dropped byhand_balance, overstating every payout)
     d = item.dict()
-    d["salary_balance"] = d.get("trip_balance", 0) - d.get("advance", 0)
+    d["salary_balance"] = d.get("trip_balance", 0) - d.get("advance", 0) - d.get("byhand_balance", 0)
     data = {k: v for k, v in d.items()
             if k in SALARY_COLS and v is not None}
     return supabase.table("driver_salary").insert(data).execute().data
@@ -981,17 +1006,27 @@ def delete_vehicle_part(part_id: int):
 
 @app.get("/reports/check-logs")
 def check_driver_logs(driver: str = "", start_date: str = "2000-01-01", end_date: str = "2100-01-01"):
-    search_term = f"%{driver}%"
+    # FIX: switched from substring (.ilike) matching to exact match — selecting
+    # one driver should not also pull in another driver whose name happens to
+    # contain the selected name as a substring. Empty string ("All Drivers")
+    # skips the filter entirely so all rows are included.
+    def apply_driver_filter(query):
+        return query.eq("driver_name", driver) if driver else query
 
-    rays = supabase.table("rays_vehicle_logs").select("thoofan_giving_balance, byhand_amount, final_balance, advance") \
-        .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
+    rays = apply_driver_filter(
+        supabase.table("rays_vehicle_logs").select("thoofan_giving_balance, byhand_amount, final_balance, advance, vehicle_rent")
+        .gte("date", start_date).lte("date", end_date)
+    ).execute()
 
-    # 🌟 FIXED: Added "final_balance" and "thoofan_giving_balance" to the Thoofan search query
-    thoofan = supabase.table("thoofan_logs").select("thoofan_giving_balance, byhand_amount, final_balance, advance") \
-        .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
+    thoofan = apply_driver_filter(
+        supabase.table("thoofan_logs").select("thoofan_giving_balance, byhand_amount, final_balance, advance, vehicle_rent")
+        .gte("date", start_date).lte("date", end_date)
+    ).execute()
 
-    other = supabase.table("other_vehicle_logs").select("thoofan_giving_balance, byhand_amount, final_balance, advance") \
-        .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
+    other = apply_driver_filter(
+        supabase.table("other_vehicle_logs").select("thoofan_giving_balance, byhand_amount, final_balance, advance, vehicle_rent")
+        .gte("date", start_date).lte("date", end_date)
+    ).execute()
 
     # 1. ADVANCE (Includes ALL Three)
     total_advance = (
@@ -1000,11 +1035,22 @@ def check_driver_logs(driver: str = "", start_date: str = "2000-01-01", end_date
         sum(float(r.get("advance") or 0) for r in other.data or [])
     )
 
-    # 2. THOOFAN GIVING AMOUNT (Only Rays + Other) - Excludes Thoofan's own logs
-    total_thoofan_giving = (
-        sum(float(r.get("thoofan_giving_balance") or 0) for r in rays.data or []) +
-        sum(float(r.get("thoofan_giving_balance") or 0) for r in other.data or [])
-    )
+    # 2a. THOOFAN GIVING AMOUNT — Rays only
+    total_thoofan_giving_rays = sum(float(r.get("thoofan_giving_balance") or 0) for r in rays.data or [])
+
+    # 2b. THOOFAN GIVING AMOUNT — Other only
+    total_thoofan_giving_other = sum(float(r.get("thoofan_giving_balance") or 0) for r in other.data or [])
+
+    # 2c. THOOFAN GIVING AMOUNT — Tufa (Thoofan's own logs) only
+    # NOTE: this column is normally 0/unused on Thoofan's own log rows since
+    # "thoofan_giving_balance" represents what Thoofan owes back to us on
+    # Rays/Other jobs — it doesn't conceptually apply to Thoofan's own
+    # entries. Included here anyway per request; will just read as ₹0 unless
+    # someone has actually populated this field on thoofan_logs rows.
+    total_thoofan_giving_tufa = sum(float(r.get("thoofan_giving_balance") or 0) for r in thoofan.data or [])
+
+    # 2. THOOFAN GIVING AMOUNT — combined (Rays + Other only), kept as-is
+    total_thoofan_giving = total_thoofan_giving_rays + total_thoofan_giving_other
 
     # 3. BY HAND GIVEN (Includes ALL Three)
     total_byhand_given = (
@@ -1013,33 +1059,45 @@ def check_driver_logs(driver: str = "", start_date: str = "2000-01-01", end_date
         sum(float(r.get("byhand_amount") or 0) for r in other.data or [])
     )
 
-    # 🌟 FIXED: 4. FINAL BALANCE (Includes ALL Three)
+    # 4. FINAL BALANCE (Includes ALL Three)
     total_final_balance = (
         sum(float(r.get("final_balance") or 0) for r in rays.data or []) +
         sum(float(r.get("final_balance") or 0) for r in thoofan.data or []) +
         sum(float(r.get("final_balance") or 0) for r in other.data or [])
     )
 
+    # 5. TOTAL VEHICLE RENT — split per company, plus combined
+    total_vehicle_rent_rays    = sum(float(r.get("vehicle_rent") or 0) for r in rays.data or [])
+    total_vehicle_rent_tufa    = sum(float(r.get("vehicle_rent") or 0) for r in thoofan.data or [])
+    total_vehicle_rent_other   = sum(float(r.get("vehicle_rent") or 0) for r in other.data or [])
+    total_vehicle_rent = total_vehicle_rent_rays + total_vehicle_rent_tufa + total_vehicle_rent_other
+
     return {
         "driver": driver,
         "total_advance": total_advance,
         "total_thoofan_giving": total_thoofan_giving,
+        "total_thoofan_giving_rays": total_thoofan_giving_rays,
+        "total_thoofan_giving_tufa": total_thoofan_giving_tufa,
         "total_byhand_given": total_byhand_given,
-        "total_final_balance": total_final_balance
+        "total_final_balance": total_final_balance,
+        "total_vehicle_rent": total_vehicle_rent,
+        "total_vehicle_rent_rays": total_vehicle_rent_rays,
+        "total_vehicle_rent_tufa": total_vehicle_rent_tufa,
+        "total_vehicle_rent_other": total_vehicle_rent_other
     }
      
 @app.get("/reports/global-driver-trips")
 def get_global_driver_trips(driver: str, start_date: str, end_date: str):
-    search_term = f"%{driver}%"
-
+    # FIX: exact match instead of substring — this route always gets a
+    # specific driver name from the dropdown (no "All Drivers" case here).
     rays = supabase.table("rays_vehicle_logs").select("total_trip_amount, advance, byhand_balance") \
-        .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
+        .eq("driver_name", driver).gte("date", start_date).lte("date", end_date).execute()
 
     thoofan = supabase.table("thoofan_logs").select("total_trip_amount, advance, byhand_balance") \
-        .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
+        .eq("driver_name", driver).gte("date", start_date).lte("date", end_date).execute()
 
     other = supabase.table("other_vehicle_logs").select("total_trip_amount, advance, byhand_balance") \
-        .ilike("driver_name", search_term).gte("date", start_date).lte("date", end_date).execute()
+        .eq("driver_name", driver).gte("date", start_date).lte("date", end_date).execute()
 
     all_trips = (rays.data or []) + (thoofan.data or []) + (other.data or [])
 
@@ -1167,19 +1225,28 @@ def save_daily_balance(data: DailyBalanceCreate):
     
     # Check if a balance for this exact day already exists
     existing = supabase.table("daily_balances").select("id").eq("account_id", acc_id).eq("date", data.date).execute()
-    
-    payload = {
-        "account_id": acc_id,
-        "date": data.date,
-        "balance": data.balance,
-        "note": data.note
-    }
 
     if existing.data:
-        # Update existing record
+        # FIX: don't blindly overwrite note with None — the frontend never sends
+        # a note on routine saves, which was silently wiping notes like
+        # "Initial Opening Balance" every time someone re-saved that day's balance.
+        # Only touch note if the caller actually supplied one.
+        payload = {
+            "account_id": acc_id,
+            "date": data.date,
+            "balance": data.balance,
+        }
+        if data.note is not None:
+            payload["note"] = data.note
         return supabase.table("daily_balances").update(payload).eq("id", existing.data[0]["id"]).execute().data
     else:
-        # Insert new record
+        # Insert new record — note is fine to include as-is (None is fine for a fresh row)
+        payload = {
+            "account_id": acc_id,
+            "date": data.date,
+            "balance": data.balance,
+            "note": data.note
+        }
         return supabase.table("daily_balances").insert(payload).execute().data
 
 @app.get("/banking/opening-balance")
