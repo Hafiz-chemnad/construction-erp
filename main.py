@@ -86,6 +86,7 @@ class GlobalLabourerCreate(BaseModel):
     wage_tar: float = 0
     wage_concrete: float = 0
     wage_local: float = 0
+    wage_hourly: float = 0
     worker_type: str = "CORE"   # 'CORE' | 'TEMP'
 
 class GlobalLabourerUpdate(BaseModel):
@@ -94,6 +95,7 @@ class GlobalLabourerUpdate(BaseModel):
     wage_tar: Optional[float] = None
     wage_concrete: Optional[float] = None
     wage_local: Optional[float] = None
+    wage_hourly: Optional[float] = None
     worker_type: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -105,8 +107,9 @@ class AttendanceLog(BaseModel):
     work_id: int
     global_labourer_id: int
     date: str
-    work_type: str          # 'TAR' | 'CONCRETE' | 'LOCAL'
-    shift_fraction: float = 1.0   # 0.25 / 0.5 / 0.75 / 1.0
+    work_type: str                          # 'TAR' | 'CONCRETE' | 'LOCAL' | 'HOURLY'
+    shift_fraction: Optional[float] = None   # 0.25/0.5/0.75/1.0 — required unless HOURLY
+    hours_worked: Optional[float] = None     # required only when work_type == 'HOURLY'
 
 class LabourCash(BaseModel):
     work_id: Optional[int] = None
@@ -564,6 +567,7 @@ WAGE_FIELD_BY_TYPE = {
     "LOCAL": "wage_local",
 }
 VALID_SHIFT_FRACTIONS = {0.25, 0.5, 0.75, 1.0}
+VALID_WORK_TYPES = {"TAR", "CONCRETE", "LOCAL", "HOURLY"}
 
 # ── GLOBAL LABOURERS (Master Worker Pool) ───────────────────────────────────
 
@@ -658,30 +662,41 @@ def get_attendance(work_id: int):
 @app.post("/attendance")
 def mark_attendance(item: AttendanceLog):
     work_type = item.work_type.upper()
-    if work_type not in WAGE_FIELD_BY_TYPE:
-        raise HTTPException(status_code=400, detail="work_type must be TAR, CONCRETE or LOCAL")
-    if item.shift_fraction not in VALID_SHIFT_FRACTIONS:
-        raise HTTPException(status_code=400, detail="shift_fraction must be 0.25, 0.5, 0.75 or 1.0")
+    if work_type not in VALID_WORK_TYPES:
+        raise HTTPException(status_code=400, detail="work_type must be TAR, CONCRETE, LOCAL or HOURLY")
 
-    # Look up the worker's rate for this work_type and snapshot the earned wage
+    # Look up the worker's rates and snapshot the earned wage
     worker = supabase.table("global_labourers").select("*").eq("id", item.global_labourer_id).single().execute()
     if not worker.data:
         raise HTTPException(status_code=404, detail="Worker not found")
 
-    wage_field = WAGE_FIELD_BY_TYPE[work_type]
-    day_rate = float(worker.data.get(wage_field) or 0)
-    wage_earned = round(day_rate * item.shift_fraction, 2)
+    if work_type == "HOURLY":
+        if item.hours_worked is None or item.hours_worked <= 0:
+            raise HTTPException(status_code=400, detail="hours_worked must be a positive number for HOURLY entries")
+        hourly_rate = float(worker.data.get("wage_hourly") or 0)
+        wage_earned = round(hourly_rate * item.hours_worked, 2)
+        shift_fraction_val = None
+        hours_worked_val = item.hours_worked
+    else:
+        if item.shift_fraction not in VALID_SHIFT_FRACTIONS:
+            raise HTTPException(status_code=400, detail="shift_fraction must be 0.25, 0.5, 0.75 or 1.0")
+        wage_field = WAGE_FIELD_BY_TYPE[work_type]
+        day_rate = float(worker.data.get(wage_field) or 0)
+        wage_earned = round(day_rate * item.shift_fraction, 2)
+        shift_fraction_val = item.shift_fraction
+        hours_worked_val = None
 
     insert_data = {
         "work_id": item.work_id,
         "global_labourer_id": item.global_labourer_id,
         "date": item.date,
         "work_type": work_type,
-        "shift_fraction": item.shift_fraction,
+        "shift_fraction": shift_fraction_val,
+        "hours_worked": hours_worked_val,
         "wage_earned": wage_earned,
     }
     # NOTE: no unique(labourer, date) check — a worker can have multiple
-    # shift entries across different sites (or work types) on the same day.
+    # shift/hourly entries across different sites (or work types) on the same day.
     res = supabase.table("attendance").insert(insert_data).execute()
     new_bal = recalculate_balance(item.work_id)
     return {"attendance": res.data, "current_balance": new_bal}
