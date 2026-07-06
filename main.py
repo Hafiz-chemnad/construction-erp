@@ -341,9 +341,17 @@ def recalculate_balance(work_id: int):
     """
     Recompute current_amount from scratch.
     current_amount = deal_amount - SUM(materials) - SUM(diesel)
-                      - SUM(attendance.wage_earned) - SUM(labour_cash where work_id set)
-    NOTE: labour_cash.work_id is nullable now (advances not always tied to a site's
-    petty cash), so only rows WITH a work_id are deducted from that site's balance.
+                      - SUM(labour_cash where work_id set) - SUM(other_expenses)
+
+    NOTE: attendance.wage_earned is intentionally EXCLUDED here. It represents a
+    *liability* (wages owed to a worker for shifts logged), not actual cash that
+    has left the site's account. Only labour_cash rows (actual payments made to
+    the worker) represent real cash outflow, so only those reduce the balance.
+    Including wage_earned here as well causes a double deduction: once when the
+    shift is logged, and again when the worker is actually paid in cash.
+
+    labour_cash.work_id is nullable (advances not always tied to a site's petty
+    cash), so only rows WITH a work_id are deducted from that site's balance.
     """
     work = supabase.table("works").select("deal_amount").eq("id", work_id).single().execute()
     deal = float(work.data["deal_amount"])
@@ -351,16 +359,14 @@ def recalculate_balance(work_id: int):
     mat_res = supabase.table("materials").select("amount").eq("work_id", work_id).execute()
     dsl_res = supabase.table("diesel").select("amount").eq("work_id", work_id).execute()
     csh_res = supabase.table("labour_cash").select("amount").eq("work_id", work_id).execute()
-    att_res = supabase.table("attendance").select("wage_earned").eq("work_id", work_id).execute()
     oth_res = supabase.table("other_expenses").select("amount").eq("work_id", work_id).execute()
 
     mat_total = sum(float(r["amount"]) for r in (mat_res.data or []))
     dsl_total = sum(float(r["amount"]) for r in (dsl_res.data or []))
     csh_total = sum(float(r["amount"]) for r in (csh_res.data or []))
-    wage_total = sum(float(r["wage_earned"] or 0) for r in (att_res.data or []))
     oth_total = sum(float(r["amount"]) for r in (oth_res.data or []))
 
-    new_balance = deal - mat_total - dsl_total - csh_total - wage_total - oth_total
+    new_balance = deal - mat_total - dsl_total - csh_total - oth_total
 
     supabase.table("works").update({
         "current_amount": new_balance,
