@@ -151,6 +151,19 @@ class DieselUpdate(BaseModel):
     date: Optional[str] = None
     note: Optional[str] = None
 
+class OtherExpenseLog(BaseModel):
+    work_id: int
+    expense_type: str
+    amount: float
+    date: str
+    note: Optional[str] = None
+
+class OtherExpenseUpdate(BaseModel):
+    expense_type: Optional[str] = None
+    amount: Optional[float] = None
+    date: Optional[str] = None
+    note: Optional[str] = None
+
 class FinishWork(BaseModel):
     quoted_amount: float
     gst_amount: float
@@ -336,13 +349,15 @@ def recalculate_balance(work_id: int):
     dsl_res = supabase.table("diesel").select("amount").eq("work_id", work_id).execute()
     csh_res = supabase.table("labour_cash").select("amount").eq("work_id", work_id).execute()
     att_res = supabase.table("attendance").select("wage_earned").eq("work_id", work_id).execute()
+    oth_res = supabase.table("other_expenses").select("amount").eq("work_id", work_id).execute()
 
     mat_total = sum(float(r["amount"]) for r in (mat_res.data or []))
     dsl_total = sum(float(r["amount"]) for r in (dsl_res.data or []))
     csh_total = sum(float(r["amount"]) for r in (csh_res.data or []))
     wage_total = sum(float(r["wage_earned"] or 0) for r in (att_res.data or []))
+    oth_total = sum(float(r["amount"]) for r in (oth_res.data or []))
 
-    new_balance = deal - mat_total - dsl_total - csh_total - wage_total
+    new_balance = deal - mat_total - dsl_total - csh_total - wage_total - oth_total
 
     supabase.table("works").update({
         "current_amount": new_balance,
@@ -497,6 +512,46 @@ def delete_diesel(diesel_id: int):
     dsl = supabase.table("diesel").select("work_id").eq("id", diesel_id).single().execute()
     work_id = dsl.data["work_id"] if dsl.data else None
     supabase.table("diesel").delete().eq("id", diesel_id).execute()
+    if work_id:
+        recalculate_balance(work_id)
+    return {"deleted": True}
+
+# ── OTHER EXPENSES ────────────────────────────────────────────────────────────
+
+OTHER_EXPENSE_TABLE_COLUMNS = {"work_id", "expense_type", "amount", "date", "note"}
+
+@app.get("/other-expenses/{work_id}")
+def get_other_expenses_by_work(work_id: int):
+    return supabase.table("other_expenses").select("*").eq("work_id", work_id).order("date", desc=True).execute().data
+
+@app.post("/other-expenses")
+def add_other_expense(item: OtherExpenseLog):
+    if item.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    data = {k: v for k, v in item.dict().items() if k in OTHER_EXPENSE_TABLE_COLUMNS and v is not None}
+    supabase.table("other_expenses").insert(data).execute()
+    new_bal = recalculate_balance(item.work_id)
+    return {"message": "Other expense logged", "current_balance": new_bal}
+
+@app.patch("/other-expenses/{expense_id}")
+def update_other_expense(expense_id: int, data: OtherExpenseUpdate):
+    update_data = {
+        k: v for k, v in data.dict().items()
+        if v is not None and k in OTHER_EXPENSE_TABLE_COLUMNS
+    }
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    res = supabase.table("other_expenses").update(update_data).eq("id", expense_id).execute()
+    oth = supabase.table("other_expenses").select("work_id").eq("id", expense_id).single().execute()
+    if oth.data:
+        recalculate_balance(oth.data["work_id"])
+    return res.data
+
+@app.delete("/other-expenses/{expense_id}")
+def delete_other_expense(expense_id: int):
+    oth = supabase.table("other_expenses").select("work_id").eq("id", expense_id).single().execute()
+    work_id = oth.data["work_id"] if oth.data else None
+    supabase.table("other_expenses").delete().eq("id", expense_id).execute()
     if work_id:
         recalculate_balance(work_id)
     return {"deleted": True}
