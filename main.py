@@ -131,12 +131,18 @@ class MaterialLog(BaseModel):
     amount: float
     date: str
     note: Optional[str] = None
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    base_price: Optional[float] = None
 
 class MaterialUpdate(BaseModel):
     name: Optional[str] = None
     amount: Optional[float] = None
     date: Optional[str] = None
     note: Optional[str] = None
+    quantity: Optional[float] = None
+    unit: Optional[str] = None
+    base_price: Optional[float] = None
 
 class DieselLog(BaseModel):
     work_id: int
