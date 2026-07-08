@@ -57,7 +57,8 @@ class AgreementCreate(BaseModel):
     treasury_fd_amount: float = 0        # ADD
     bank_fd_amount: float = 0            # ADD
     security_period: int
-    security_closing_date: Optional[str] = None
+    additional_pg_amount: float = 0
+    additional_pg_date: Optional[str] = None
     insurance_amount: float
     site_number: str
     site_handover_date: str
@@ -75,7 +76,8 @@ class AgreementUpdate(BaseModel):
     treasury_fd_amount: float = 0      # ADD
     bank_fd_amount: float = 0
     security_period: Optional[int] = None
-    security_closing_date: Optional[str] = None
+    additional_pg_amount: Optional[float] = None
+    additional_pg_date: Optional[str] = None
     insurance_amount: Optional[float] = None
     site_number: Optional[str] = None
     site_handover_date: Optional[str] = None
