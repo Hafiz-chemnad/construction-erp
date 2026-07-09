@@ -62,6 +62,7 @@ class AgreementCreate(BaseModel):
     insurance_amount: float
     site_number: str
     site_handover_date: str
+    fd_date: Optional[str] = None
 
 class AgreementUpdate(BaseModel):
     tender_amount: Optional[float] = None
@@ -81,6 +82,7 @@ class AgreementUpdate(BaseModel):
     insurance_amount: Optional[float] = None
     site_number: Optional[str] = None
     site_handover_date: Optional[str] = None
+    fd_date: Optional[str] = None
 
 class GlobalLabourerCreate(BaseModel):
     name: str
@@ -1461,6 +1463,39 @@ def get_fd_totals():
         treasury_fd += float(a.get("treasury_fd_amount") or 0)
 
     return {"Bank FD": bank_fd, "Treasury FD": treasury_fd}
+
+@app.get("/banking/fd-history")
+def get_fd_history():
+    """Returns one row per agreement that has a Treasury or Bank FD, with work/panchayath context."""
+    agreements = supabase.table("agreements") \
+        .select("fd_date, treasury_fd_amount, bank_fd_amount, work_id") \
+        .execute().data or []
+
+    relevant = [a for a in agreements if (a.get("treasury_fd_amount") or 0) > 0 or (a.get("bank_fd_amount") or 0) > 0]
+    if not relevant:
+        return []
+
+    work_ids = list({a["work_id"] for a in relevant if a.get("work_id")})
+    works = supabase.table("works").select("id, name, panchayath_id").in_("id", work_ids).execute().data or []
+    works_by_id = {w["id"]: w for w in works}
+
+    panchayath_ids = list({w["panchayath_id"] for w in works if w.get("panchayath_id")})
+    panchayaths = supabase.table("panchayaths").select("id, name").in_("id", panchayath_ids).execute().data or [] if panchayath_ids else []
+    panchayaths_by_id = {p["id"]: p["name"] for p in panchayaths}
+
+    result = []
+    for a in relevant:
+        w = works_by_id.get(a.get("work_id"), {})
+        result.append({
+            "date": a.get("fd_date"),
+            "panchayath_name": panchayaths_by_id.get(w.get("panchayath_id"), "—"),
+            "work_name": w.get("name", "—"),
+            "treasury_fd_amount": a.get("treasury_fd_amount") or 0,
+            "bank_fd_amount": a.get("bank_fd_amount") or 0,
+        })
+
+    result.sort(key=lambda r: r["date"] or "", reverse=True)
+    return result
 @app.get("/banking/od-logs/{account_name}")
 def get_od_logs(account_name: str):
     acc_id = get_account_id(account_name)
