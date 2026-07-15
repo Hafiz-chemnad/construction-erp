@@ -219,6 +219,7 @@ class VehicleLogBase(BaseModel):
     thoofan_giving_balance: float = 0
     final_balance: float = 0
     byhand_amount: float = 0
+    byhand_given_to: Optional[str] = None   # 🌟 NEW: 'rays' | 'thoofan' | 'other'
     load_qty: float = 0
     trip_rate: float = 0
     trip_amount: float = 0
@@ -231,7 +232,7 @@ class VehicleLogBase(BaseModel):
     service_amount: float = 0
     byhand_balance: float = 0
     trip_balance: float = 0
-    advance: float = 0  # 🌟 ADD THIS LINE
+    advance: float = 0
     note: Optional[str] = None
 
 class ThoofanLogCreate(VehicleLogBase):
@@ -256,6 +257,7 @@ class VehicleLogUpdate(BaseModel):
     thoofan_giving_balance: Optional[float] = None
     final_balance: Optional[float] = None
     byhand_amount: Optional[float] = None
+    byhand_given_to: Optional[str] = None   # 🌟 NEW
     load_qty: Optional[float] = None
     trip_rate: Optional[float] = None
     trip_amount: Optional[float] = None
@@ -268,8 +270,9 @@ class VehicleLogUpdate(BaseModel):
     service_amount: Optional[float] = None
     byhand_balance: Optional[float] = None
     trip_balance: Optional[float] = None
-    advance: float = 0  # 🌟 ADD THIS LINE
+    advance: Optional[float] = None
     note: Optional[str] = None
+
 class RaysMachineLogCreate(BaseModel):
     vehicle_id:     int
     date:           str
@@ -828,7 +831,9 @@ def delete_vehicle(vehicle_id: int):
 UNIFIED_LOG_COLS = {
     "vehicle_id", "date", "site", "driver_name", "item", "party_name",
     "party_qty", "base_price", "total_price", "vehicle_rent", "total_amount",
-    "thoofan_giving_balance", "final_balance", "byhand_amount", "load_qty",
+    "thoofan_giving_balance", "final_balance", "byhand_amount",
+    "byhand_given_to",  # 🌟 NEW
+    "load_qty",
     "trip_rate", "trip_amount", "total_trip_amount", "diesel_amount", "km",
     "rto_amount", "parts_name", "parts_amount", "service_amount",
     "byhand_balance", "trip_balance","advance","note"
@@ -1092,84 +1097,107 @@ def delete_vehicle_part(part_id: int):
 
 @app.get("/reports/check-logs")
 def check_driver_logs(driver: str = "", start_date: str = "2000-01-01", end_date: str = "2100-01-01"):
-    # FIX: switched from substring (.ilike) matching to exact match — selecting
-    # one driver should not also pull in another driver whose name happens to
-    # contain the selected name as a substring. Empty string ("All Drivers")
-    # skips the filter entirely so all rows are included.
+    # FIX: exact match instead of substring — selecting one driver should not
+    # also pull in another driver whose name happens to contain the selected
+    # name as a substring. Empty string ("All Drivers") skips the filter.
     def apply_driver_filter(query):
         return query.eq("driver_name", driver) if driver else query
 
+    SELECT_COLS = (
+        "thoofan_giving_balance, byhand_amount, byhand_given_to, "
+        "final_balance, advance, vehicle_rent, "
+        "diesel_amount, parts_amount, service_amount"
+    )
+
     rays = apply_driver_filter(
-        supabase.table("rays_vehicle_logs").select("thoofan_giving_balance, byhand_amount, final_balance, advance, vehicle_rent")
+        supabase.table("rays_vehicle_logs").select(SELECT_COLS)
         .gte("date", start_date).lte("date", end_date)
     ).execute()
 
     thoofan = apply_driver_filter(
-        supabase.table("thoofan_logs").select("thoofan_giving_balance, byhand_amount, final_balance, advance, vehicle_rent")
+        supabase.table("thoofan_logs").select(SELECT_COLS)
         .gte("date", start_date).lte("date", end_date)
     ).execute()
 
     other = apply_driver_filter(
-        supabase.table("other_vehicle_logs").select("thoofan_giving_balance, byhand_amount, final_balance, advance, vehicle_rent")
+        supabase.table("other_vehicle_logs").select(SELECT_COLS)
         .gte("date", start_date).lte("date", end_date)
     ).execute()
 
+    all_rows = (rays.data or []) + (thoofan.data or []) + (other.data or [])
+
     # 1. ADVANCE (Includes ALL Three)
-    total_advance = (
-        sum(float(r.get("advance") or 0) for r in rays.data or []) +
-        sum(float(r.get("advance") or 0) for r in thoofan.data or []) +
-        sum(float(r.get("advance") or 0) for r in other.data or [])
-    )
+    total_advance = sum(float(r.get("advance") or 0) for r in all_rows)
 
-    # 2a. THOOFAN GIVING AMOUNT — Rays only
-    total_thoofan_giving_rays = sum(float(r.get("thoofan_giving_balance") or 0) for r in rays.data or [])
-
-    # 2b. THOOFAN GIVING AMOUNT — Other only
+    # 2. THOOFAN GIVING AMOUNT — split per source table, plus combined
+    total_thoofan_giving_rays  = sum(float(r.get("thoofan_giving_balance") or 0) for r in rays.data or [])
     total_thoofan_giving_other = sum(float(r.get("thoofan_giving_balance") or 0) for r in other.data or [])
-
-    # 2c. THOOFAN GIVING AMOUNT — Tufa (Thoofan's own logs) only
     # NOTE: this column is normally 0/unused on Thoofan's own log rows since
     # "thoofan_giving_balance" represents what Thoofan owes back to us on
-    # Rays/Other jobs — it doesn't conceptually apply to Thoofan's own
-    # entries. Included here anyway per request; will just read as ₹0 unless
-    # someone has actually populated this field on thoofan_logs rows.
-    total_thoofan_giving_tufa = sum(float(r.get("thoofan_giving_balance") or 0) for r in thoofan.data or [])
-
-    # 2. THOOFAN GIVING AMOUNT — combined (Rays + Other only), kept as-is
+    # Rays/Other jobs — kept here for completeness.
+    total_thoofan_giving_tufa  = sum(float(r.get("thoofan_giving_balance") or 0) for r in thoofan.data or [])
     total_thoofan_giving = total_thoofan_giving_rays + total_thoofan_giving_other
 
-    # 3. BY HAND GIVEN (Includes ALL Three)
-    total_byhand_given = (
-        sum(float(r.get("byhand_amount") or 0) for r in rays.data or []) +
-        sum(float(r.get("byhand_amount") or 0) for r in thoofan.data or []) +
-        sum(float(r.get("byhand_amount") or 0) for r in other.data or [])
-    )
+    # 3. BY HAND GIVEN — split by WHO ACTUALLY GOT THE CASH (byhand_given_to),
+    # NOT by which table the log physically lives in. This lets a Rays trip
+    # hand cash to a Thoofan driver and have it counted correctly.
+    def tag(row, default):
+        return (row.get("byhand_given_to") or default)
+
+    tagged_rows = []
+    for r in (rays.data or []):
+        tagged_rows.append((r, tag(r, "rays")))
+    for r in (thoofan.data or []):
+        tagged_rows.append((r, tag(r, "thoofan")))
+    for r in (other.data or []):
+        tagged_rows.append((r, tag(r, "other")))
+
+    total_byhand_given_rays  = sum(float(r.get("byhand_amount") or 0) for r, t in tagged_rows if t == "rays")
+    total_byhand_given_tufa  = sum(float(r.get("byhand_amount") or 0) for r, t in tagged_rows if t == "thoofan")
+    total_byhand_given_other = sum(float(r.get("byhand_amount") or 0) for r, t in tagged_rows if t == "other")
+    total_byhand_given = total_byhand_given_rays + total_byhand_given_tufa + total_byhand_given_other
 
     # 4. FINAL BALANCE (Includes ALL Three)
-    total_final_balance = (
-        sum(float(r.get("final_balance") or 0) for r in rays.data or []) +
-        sum(float(r.get("final_balance") or 0) for r in thoofan.data or []) +
-        sum(float(r.get("final_balance") or 0) for r in other.data or [])
-    )
+    total_final_balance = sum(float(r.get("final_balance") or 0) for r in all_rows)
 
     # 5. TOTAL VEHICLE RENT — split per company, plus combined
-    total_vehicle_rent_rays    = sum(float(r.get("vehicle_rent") or 0) for r in rays.data or [])
-    total_vehicle_rent_tufa    = sum(float(r.get("vehicle_rent") or 0) for r in thoofan.data or [])
-    total_vehicle_rent_other   = sum(float(r.get("vehicle_rent") or 0) for r in other.data or [])
+    total_vehicle_rent_rays  = sum(float(r.get("vehicle_rent") or 0) for r in rays.data or [])
+    total_vehicle_rent_tufa  = sum(float(r.get("vehicle_rent") or 0) for r in thoofan.data or [])
+    total_vehicle_rent_other = sum(float(r.get("vehicle_rent") or 0) for r in other.data or [])
     total_vehicle_rent = total_vehicle_rent_rays + total_vehicle_rent_tufa + total_vehicle_rent_other
+
+    # 6. TOTAL DIESEL AMOUNT (combined, all 3 companies)
+    total_diesel = sum(float(r.get("diesel_amount") or 0) for r in all_rows)
+
+    # 7. TOTAL VEHICLE EXPENSE = parts_amount + service_amount (combined, all 3 companies)
+    total_vehicle_expense = sum(
+        float(r.get("parts_amount") or 0) + float(r.get("service_amount") or 0)
+        for r in all_rows
+    )
 
     return {
         "driver": driver,
         "total_advance": total_advance,
+
         "total_thoofan_giving": total_thoofan_giving,
         "total_thoofan_giving_rays": total_thoofan_giving_rays,
         "total_thoofan_giving_tufa": total_thoofan_giving_tufa,
+        "total_thoofan_giving_other": total_thoofan_giving_other,   # 🌟 was missing before
+
         "total_byhand_given": total_byhand_given,
+        "total_byhand_given_rays": total_byhand_given_rays,     # 🌟 NEW
+        "total_byhand_given_tufa": total_byhand_given_tufa,     # 🌟 NEW
+        "total_byhand_given_other": total_byhand_given_other,   # 🌟 NEW
+
         "total_final_balance": total_final_balance,
+
         "total_vehicle_rent": total_vehicle_rent,
         "total_vehicle_rent_rays": total_vehicle_rent_rays,
         "total_vehicle_rent_tufa": total_vehicle_rent_tufa,
-        "total_vehicle_rent_other": total_vehicle_rent_other
+        "total_vehicle_rent_other": total_vehicle_rent_other,
+
+        "total_diesel": total_diesel,                       # 🌟 NEW
+        "total_vehicle_expense": total_vehicle_expense,      # 🌟 NEW
     }
      
 @app.get("/reports/global-driver-trips")
