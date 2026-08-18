@@ -17,6 +17,7 @@ app = FastAPI(title="Raje Construction ERP API")
 origins = [
     "http://127.0.0.1:5500",
     "http://localhost:5500",
+    "http://localhost:3000",
     "https://chic-vacherin-b8782a.netlify.app",
     "https://rococo-kulfi-69d6d2.netlify.app",
     "https://raysconstruction.netlify.app",
